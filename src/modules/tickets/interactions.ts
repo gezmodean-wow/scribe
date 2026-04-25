@@ -1,0 +1,104 @@
+import type {
+  APIInteractionGuildMember,
+  ChatInputCommandInteraction,
+  GuildMember,
+} from 'discord.js';
+import {
+  handleCogLabelSet,
+  handleCogLabelUnset,
+  handleCogLink,
+  handleCogList,
+  handleCogStatusList,
+  handleCogStatusSet,
+  handleCogStatusUnset,
+  handleCogTagList,
+  handleCogTagSet,
+  handleCogTagUnset,
+  handleCogUnlink,
+  handleTagAutocomplete,
+  handleTrack,
+} from './handlers.js';
+import type { TicketsModuleDeps } from './index.js';
+
+type Handler = (
+  interaction: ChatInputCommandInteraction,
+  deps: TicketsModuleDeps
+) => Promise<void>;
+
+const HANDLERS: Record<string, Handler> = {
+  track: handleTrack,
+  'cog-link': handleCogLink,
+  'cog-unlink': handleCogUnlink,
+  'cog-list': handleCogList,
+  'cog-tag-set': handleCogTagSet,
+  'cog-tag-unset': handleCogTagUnset,
+  'cog-tag-list': handleCogTagList,
+  'cog-status-set': handleCogStatusSet,
+  'cog-status-unset': handleCogStatusUnset,
+  'cog-status-list': handleCogStatusList,
+  'cog-label-set': handleCogLabelSet,
+  'cog-label-unset': handleCogLabelUnset,
+};
+
+const AUTOCOMPLETE_COMMANDS = new Set([
+  'cog-tag-set',
+  'cog-tag-unset',
+  'cog-status-set',
+  'cog-label-set',
+]);
+
+export function registerTicketsInteractions(deps: TicketsModuleDeps) {
+  deps.discord.on('interactionCreate', async (interaction) => {
+    if (interaction.isAutocomplete()) {
+      if (AUTOCOMPLETE_COMMANDS.has(interaction.commandName)) {
+        await handleTagAutocomplete(interaction, deps).catch((err) =>
+          deps.log.warn({ err }, 'autocomplete failed')
+        );
+      }
+      return;
+    }
+
+    if (!interaction.isChatInputCommand()) return;
+    const handler = HANDLERS[interaction.commandName];
+    if (!handler) return;
+
+    if (!isAuthorized(interaction.member, deps.config.discord.staffRoleIds)) {
+      await interaction.reply({
+        content: "You don't have permission to use this command.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    try {
+      await handler(interaction, deps);
+    } catch (err) {
+      deps.log.error(
+        { err, command: interaction.commandName },
+        'slash command handler failed'
+      );
+      const msg = 'Something went wrong. Check the logs.';
+      if (interaction.replied || interaction.deferred) {
+        await interaction.editReply(msg).catch(() => {});
+      } else {
+        await interaction
+          .reply({ content: msg, ephemeral: true })
+          .catch(() => {});
+      }
+    }
+  });
+}
+
+function isAuthorized(
+  member: GuildMember | APIInteractionGuildMember | null,
+  allowedRoleIds: string[]
+): boolean {
+  if (!member) return false;
+
+  const memberRoleIds =
+    'cache' in member.roles
+      ? Array.from(member.roles.cache.keys())
+      : member.roles;
+
+  return allowedRoleIds.some((id) => memberRoleIds.includes(id));
+}

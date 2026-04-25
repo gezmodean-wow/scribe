@@ -1,0 +1,1 @@
+ALTER TABLE "cog_channels" ADD COLUMN "status_tag_map" jsonb DEFAULT '{}'::jsonb NOT NULL;
