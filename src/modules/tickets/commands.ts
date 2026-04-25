@@ -242,6 +242,28 @@ export const ticketsCommands: RESTPostAPIApplicationCommandsJSONBody[] = [
     .toJSON(),
 
   new SlashCommandBuilder()
+    .setName('cog-copy-config')
+    .setDescription(
+      'Copy tag/label/status mappings from one linked forum to another (matched by tag name).'
+    )
+    .setDMPermission(false)
+    .addChannelOption((o) =>
+      o
+        .setName('from')
+        .setDescription('Source forum channel (already linked)')
+        .addChannelTypes(ChannelType.GuildForum)
+        .setRequired(true)
+    )
+    .addChannelOption((o) =>
+      o
+        .setName('to')
+        .setDescription('Destination forum channel (already linked)')
+        .addChannelTypes(ChannelType.GuildForum)
+        .setRequired(true)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
     .setName('cog-backfill')
     .setDescription(
       'Back-fill thread→issue mappings from thread names matching [PREFIX-N].'

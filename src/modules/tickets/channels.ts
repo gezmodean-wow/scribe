@@ -109,6 +109,20 @@ export async function setStatusMapping(
   return row;
 }
 
+export async function replaceMappings(
+  db: Database,
+  discordChannelId: string,
+  tagLabelMap: Record<string, string>,
+  statusTagMap: Record<string, string>
+): Promise<CogChannel | undefined> {
+  const [row] = await db
+    .update(cogChannels)
+    .set({ tagLabelMap, statusTagMap, updatedAt: new Date() })
+    .where(eq(cogChannels.discordChannelId, discordChannelId))
+    .returning();
+  return row;
+}
+
 export async function unsetStatusMapping(
   db: Database,
   discordChannelId: string,

@@ -12,6 +12,7 @@ import {
   findCogForChannel,
   linkChannel,
   listChannels,
+  replaceMappings,
   setStatusMapping,
   setTagMapping,
   unlinkChannel,
@@ -535,6 +536,131 @@ export async function handleCogLabelUnset(
 
   await unsetStatusMapping(deps.db, channel.id, statusKey);
   await interaction.editReply(`Removed \`${labelName}\` mapping.`);
+}
+
+export async function handleCogCopyConfig(
+  interaction: ChatInputCommandInteraction,
+  deps: TicketsModuleDeps
+) {
+  const fromChannel = interaction.options.getChannel('from', true);
+  const toChannel = interaction.options.getChannel('to', true);
+
+  if (
+    fromChannel.type !== ChannelType.GuildForum ||
+    toChannel.type !== ChannelType.GuildForum
+  ) {
+    await interaction.reply({
+      content: 'Both channels must be forum channels.',
+      ephemeral: true,
+    });
+    return;
+  }
+  if (fromChannel.id === toChannel.id) {
+    await interaction.reply({
+      content: 'Source and destination are the same channel.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const fromCog = await findCogForChannel(deps.db, fromChannel.id);
+  if (!fromCog) {
+    await interaction.editReply(
+      `<#${fromChannel.id}> isn't linked. Use \`/cog-link\` on the source first.`
+    );
+    return;
+  }
+  const toCog = await findCogForChannel(deps.db, toChannel.id);
+  if (!toCog) {
+    await interaction.editReply(
+      `<#${toChannel.id}> isn't linked. Use \`/cog-link\` on the destination first.`
+    );
+    return;
+  }
+
+  const [fromForum, toForum] = (await Promise.all([
+    deps.discord.channels.fetch(fromChannel.id).catch(() => null),
+    deps.discord.channels.fetch(toChannel.id).catch(() => null),
+  ])) as [ForumChannel | null, ForumChannel | null];
+  if (!fromForum || !toForum) {
+    await interaction.editReply('Could not fetch one of the forum channels.');
+    return;
+  }
+
+  const fromNameById = new Map<string, string>();
+  for (const t of fromForum.availableTags) fromNameById.set(t.id, t.name);
+  const toIdByName = new Map<string, string>();
+  for (const t of toForum.availableTags) toIdByName.set(t.name, t.id);
+
+  const newTagLabelMap: Record<string, string> = {};
+  const newStatusTagMap: Record<string, string> = {};
+  const missingTagNames = new Set<string>();
+  let copiedTagCount = 0;
+  let copiedStateCount = 0;
+  let copiedLabelCount = 0;
+
+  for (const [srcTagId, label] of Object.entries(fromCog.tagLabelMap)) {
+    const name = fromNameById.get(srcTagId);
+    if (!name) continue;
+    const destTagId = toIdByName.get(name);
+    if (!destTagId) {
+      missingTagNames.add(name);
+      continue;
+    }
+    newTagLabelMap[destTagId] = label;
+    copiedTagCount++;
+  }
+
+  for (const [statusKey, srcTagId] of Object.entries(fromCog.statusTagMap)) {
+    const name = fromNameById.get(srcTagId);
+    if (!name) continue;
+    const destTagId = toIdByName.get(name);
+    if (!destTagId) {
+      missingTagNames.add(name);
+      continue;
+    }
+    newStatusTagMap[statusKey] = destTagId;
+    if (statusKey.startsWith('label:')) copiedLabelCount++;
+    else copiedStateCount++;
+  }
+
+  await replaceMappings(
+    deps.db,
+    toChannel.id,
+    newTagLabelMap,
+    newStatusTagMap
+  );
+
+  const lines = [
+    `Copied <#${fromChannel.id}> → <#${toChannel.id}>:`,
+    `• ${copiedTagCount} intake tag mapping(s)`,
+    `• ${copiedStateCount} state mapping(s)`,
+    `• ${copiedLabelCount} label mapping(s)`,
+  ];
+  if (missingTagNames.size > 0) {
+    lines.push(
+      '',
+      `**Skipped** — these tag names exist on the source but not on <#${toChannel.id}>:`,
+      ...[...missingTagNames].map((n) => `  • \`${n}\``),
+      '',
+      'Add the missing tags to the destination forum and re-run this command to pick them up.'
+    );
+  }
+  await interaction.editReply(lines.join('\n'));
+
+  deps.log.info(
+    {
+      from: fromChannel.id,
+      to: toChannel.id,
+      copiedTagCount,
+      copiedStateCount,
+      copiedLabelCount,
+      missingTagCount: missingTagNames.size,
+    },
+    'cog-copy-config complete'
+  );
 }
 
 export async function handleCogBackfill(

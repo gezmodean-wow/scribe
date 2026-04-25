@@ -5,6 +5,7 @@ import type {
 } from 'discord.js';
 import {
   handleCogBackfill,
+  handleCogCopyConfig,
   handleCogLabelSet,
   handleCogLabelUnset,
   handleCogLink,
@@ -40,6 +41,7 @@ const HANDLERS: Record<string, Handler> = {
   'cog-label-set': handleCogLabelSet,
   'cog-label-unset': handleCogLabelUnset,
   'cog-backfill': handleCogBackfill,
+  'cog-copy-config': handleCogCopyConfig,
 };
 
 const AUTOCOMPLETE_COMMANDS = new Set([
