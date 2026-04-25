@@ -537,6 +537,155 @@ export async function handleCogLabelUnset(
   await interaction.editReply(`Removed \`${labelName}\` mapping.`);
 }
 
+export async function handleCogBackfill(
+  interaction: ChatInputCommandInteraction,
+  deps: TicketsModuleDeps
+) {
+  const channel = interaction.options.getChannel('channel', true);
+  if (channel.type !== ChannelType.GuildForum) {
+    await interaction.reply({
+      content: 'Pick a forum channel.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const cog = await findCogForChannel(deps.db, channel.id);
+  if (!cog) {
+    await interaction.editReply(
+      'This channel isn\'t linked to a cog repository. Run `/cog-link` first.'
+    );
+    return;
+  }
+
+  const forum = (await deps.discord.channels
+    .fetch(channel.id)
+    .catch(() => null)) as ForumChannel | null;
+  if (!forum) {
+    await interaction.editReply('Could not fetch the forum channel.');
+    return;
+  }
+
+  const threads = await fetchAllForumThreads(forum);
+  const idPattern = new RegExp(
+    `\\[${escapeRegex(cog.cogIdPrefix)}-(\\d+)\\]`,
+    'i'
+  );
+
+  let created = 0;
+  let alreadyMapped = 0;
+  let noMatch = 0;
+  let ghMissing = 0;
+  let errors = 0;
+
+  for (const thread of threads) {
+    const existing = await deps.db
+      .select()
+      .from(threadIssueMap)
+      .where(eq(threadIssueMap.discordThreadId, thread.id))
+      .limit(1);
+    if (existing.length > 0) {
+      alreadyMapped++;
+      continue;
+    }
+
+    const m = thread.name.match(idPattern);
+    if (!m) {
+      noMatch++;
+      continue;
+    }
+    const issueNumber = Number.parseInt(m[1]!, 10);
+
+    try {
+      const { data: issue } = await deps.github.rest.issues.get({
+        owner: cog.githubOwner,
+        repo: cog.githubRepo,
+        issue_number: issueNumber,
+      });
+      await deps.db.insert(threadIssueMap).values({
+        discordThreadId: thread.id,
+        discordChannelId: channel.id,
+        discordGuildId: interaction.guildId ?? '',
+        githubOwner: cog.githubOwner,
+        githubRepo: cog.githubRepo,
+        githubIssueNumber: issue.number,
+        githubIssueNodeId: issue.node_id,
+      });
+      created++;
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      if (status === 404) {
+        ghMissing++;
+      } else {
+        errors++;
+        deps.log.warn(
+          { err, threadId: thread.id, issueNumber },
+          'backfill: github lookup failed'
+        );
+      }
+    }
+  }
+
+  const lines = [
+    `Backfill complete for <#${channel.id}>:`,
+    `• ${created} new mapping(s) created`,
+    `• ${alreadyMapped} already mapped (skipped)`,
+    `• ${noMatch} thread(s) had no \`[${cog.cogIdPrefix}-N]\` pattern`,
+  ];
+  if (ghMissing > 0) {
+    lines.push(`• ${ghMissing} matched IDs but issue not found on GitHub`);
+  }
+  if (errors > 0) {
+    lines.push(`• ${errors} error(s) — check logs`);
+  }
+  await interaction.editReply(lines.join('\n'));
+
+  deps.log.info(
+    {
+      channelId: channel.id,
+      cog: `${cog.githubOwner}/${cog.githubRepo}`,
+      total: threads.length,
+      created,
+      alreadyMapped,
+      noMatch,
+      ghMissing,
+      errors,
+    },
+    'cog-backfill complete'
+  );
+}
+
+async function fetchAllForumThreads(
+  forum: ForumChannel
+): Promise<ThreadChannel[]> {
+  const all: ThreadChannel[] = [];
+
+  const active = await forum.threads.fetchActive();
+  all.push(...active.threads.values());
+
+  let before: ThreadChannel | undefined;
+  const MAX_PAGES = 20;
+  for (let i = 0; i < MAX_PAGES; i++) {
+    const page = await forum.threads.fetchArchived({
+      limit: 100,
+      ...(before ? { before } : {}),
+    });
+    const got = [...page.threads.values()];
+    if (got.length === 0) break;
+    all.push(...got);
+    if (!page.hasMore) break;
+    before = got[got.length - 1];
+  }
+
+  return all;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export async function handleTagAutocomplete(
   interaction: AutocompleteInteraction,
   _deps: TicketsModuleDeps

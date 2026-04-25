@@ -240,4 +240,19 @@ export const ticketsCommands: RESTPostAPIApplicationCommandsJSONBody[] = [
         .setRequired(true)
     )
     .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('cog-backfill')
+    .setDescription(
+      'Back-fill thread→issue mappings from thread names matching [PREFIX-N].'
+    )
+    .setDMPermission(false)
+    .addChannelOption((o) =>
+      o
+        .setName('channel')
+        .setDescription('Forum channel to scan')
+        .addChannelTypes(ChannelType.GuildForum)
+        .setRequired(true)
+    )
+    .toJSON(),
 ];

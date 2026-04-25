@@ -4,6 +4,7 @@ import type {
   GuildMember,
 } from 'discord.js';
 import {
+  handleCogBackfill,
   handleCogLabelSet,
   handleCogLabelUnset,
   handleCogLink,
@@ -38,6 +39,7 @@ const HANDLERS: Record<string, Handler> = {
   'cog-status-list': handleCogStatusList,
   'cog-label-set': handleCogLabelSet,
   'cog-label-unset': handleCogLabelUnset,
+  'cog-backfill': handleCogBackfill,
 };
 
 const AUTOCOMPLETE_COMMANDS = new Set([
