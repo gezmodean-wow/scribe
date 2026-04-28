@@ -821,7 +821,8 @@ export async function handleCogReleaseSet(
   const channel = interaction.options.getChannel('channel', true);
   const announce = interaction.options.getChannel('announce', false);
   const review = interaction.options.getChannel('review', false);
-  const downloadUrl = interaction.options.getString('download_url', false);
+  const cfSlug = interaction.options.getString('cf_slug', false);
+  const wagoSlug = interaction.options.getString('wago_slug', false);
 
   if (channel.type !== ChannelType.GuildForum) {
     await interaction.reply({
@@ -831,10 +832,10 @@ export async function handleCogReleaseSet(
     return;
   }
 
-  if (!announce && !review && !downloadUrl) {
+  if (!announce && !review && cfSlug === null && wagoSlug === null) {
     await interaction.reply({
       content:
-        'Provide at least one of `announce`, `review`, or `download_url`.',
+        'Provide at least one of `announce`, `review`, `cf_slug`, or `wago_slug`.',
       ephemeral: true,
     });
     return;
@@ -853,14 +854,20 @@ export async function handleCogReleaseSet(
   const fields: Parameters<typeof setReleaseConfig>[2] = {};
   if (announce) fields.releaseAnnounceChannelId = announce.id;
   if (review) fields.releaseReviewChannelId = review.id;
-  if (downloadUrl !== null) fields.downloadInfoUrl = downloadUrl;
+  if (cfSlug !== null) fields.curseforgeSlug = cfSlug || null;
+  if (wagoSlug !== null) fields.wagoSlug = wagoSlug || null;
 
   await setReleaseConfig(deps.db, channel.id, fields);
 
   const lines = [`Updated release config on <#${channel.id}>:`];
   if (announce) lines.push(`• announce → <#${announce.id}>`);
   if (review) lines.push(`• review → <#${review.id}>`);
-  if (downloadUrl) lines.push(`• download → ${downloadUrl}`);
+  if (cfSlug !== null) {
+    lines.push(`• CurseForge slug → ${cfSlug ? `\`${cfSlug}\`` : '_(cleared)_'}`);
+  }
+  if (wagoSlug !== null) {
+    lines.push(`• Wago slug → ${wagoSlug ? `\`${wagoSlug}\`` : '_(cleared)_'}`);
+  }
   await interaction.editReply(lines.join('\n'));
 }
 
@@ -894,8 +901,11 @@ export async function handleCogReleaseClear(
   if (field === 'review' || field === 'all') {
     fields.releaseReviewChannelId = null;
   }
-  if (field === 'download_url' || field === 'all') {
-    fields.downloadInfoUrl = null;
+  if (field === 'cf_slug' || field === 'all') {
+    fields.curseforgeSlug = null;
+  }
+  if (field === 'wago_slug' || field === 'all') {
+    fields.wagoSlug = null;
   }
   await setReleaseConfig(deps.db, channel.id, fields);
   await interaction.editReply(`Cleared ${field} on <#${channel.id}>.`);
@@ -927,7 +937,8 @@ export async function handleCogReleaseShow(
     `Release config for <#${channel.id}> (**${cog.githubOwner}/${cog.githubRepo}**):`,
     `• announce: ${cog.releaseAnnounceChannelId ? `<#${cog.releaseAnnounceChannelId}>` : '_(unset)_'}`,
     `• review: ${cog.releaseReviewChannelId ? `<#${cog.releaseReviewChannelId}>` : '_(unset)_'}`,
-    `• download: ${cog.downloadInfoUrl ?? '_(unset)_'}`,
+    `• CurseForge slug: ${cog.curseforgeSlug ? `\`${cog.curseforgeSlug}\`` : '_(unset)_'}`,
+    `• Wago slug: ${cog.wagoSlug ? `\`${cog.wagoSlug}\`` : '_(unset)_'}`,
   ];
   await interaction.editReply(lines.join('\n'));
 }

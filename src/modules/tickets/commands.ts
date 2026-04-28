@@ -281,7 +281,7 @@ export const ticketsCommands: RESTPostAPIApplicationCommandsJSONBody[] = [
   new SlashCommandBuilder()
     .setName('cog-release-set')
     .setDescription(
-      'Configure release announce/review channels + download URL for a linked cog.'
+      'Configure release announce/review channels + CF/Wago slugs for a linked cog.'
     )
     .setDMPermission(false)
     .addChannelOption((o) =>
@@ -307,8 +307,14 @@ export const ticketsCommands: RESTPostAPIApplicationCommandsJSONBody[] = [
     )
     .addStringOption((o) =>
       o
-        .setName('download_url')
-        .setDescription('Link players follow to install/update (CF, Wago, etc.)')
+        .setName('cf_slug')
+        .setDescription('CurseForge addon slug (e.g. "flipqueue"). Empty if not on CF.')
+        .setRequired(false)
+    )
+    .addStringOption((o) =>
+      o
+        .setName('wago_slug')
+        .setDescription('Wago addon slug (e.g. "flipqueue"). Empty if not on Wago.')
         .setRequired(false)
     )
     .toJSON(),
@@ -332,7 +338,8 @@ export const ticketsCommands: RESTPostAPIApplicationCommandsJSONBody[] = [
         .addChoices(
           { name: 'announce channel', value: 'announce' },
           { name: 'review channel', value: 'review' },
-          { name: 'download URL', value: 'download_url' },
+          { name: 'CurseForge slug', value: 'cf_slug' },
+          { name: 'Wago slug', value: 'wago_slug' },
           { name: 'all release fields', value: 'all' }
         )
     )

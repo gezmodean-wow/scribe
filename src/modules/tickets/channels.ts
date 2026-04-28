@@ -146,7 +146,8 @@ export async function setReleaseConfig(
   fields: {
     releaseAnnounceChannelId?: string | null;
     releaseReviewChannelId?: string | null;
-    downloadInfoUrl?: string | null;
+    curseforgeSlug?: string | null;
+    wagoSlug?: string | null;
   }
 ): Promise<CogChannel | undefined> {
   const set: Record<string, unknown> = { updatedAt: new Date() };
@@ -156,8 +157,11 @@ export async function setReleaseConfig(
   if (fields.releaseReviewChannelId !== undefined) {
     set.releaseReviewChannelId = fields.releaseReviewChannelId;
   }
-  if (fields.downloadInfoUrl !== undefined) {
-    set.downloadInfoUrl = fields.downloadInfoUrl;
+  if (fields.curseforgeSlug !== undefined) {
+    set.curseforgeSlug = fields.curseforgeSlug;
+  }
+  if (fields.wagoSlug !== undefined) {
+    set.wagoSlug = fields.wagoSlug;
   }
   const [row] = await db
     .update(cogChannels)

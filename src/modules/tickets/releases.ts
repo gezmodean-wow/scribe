@@ -68,6 +68,36 @@ export function classifyReleaseChannel(
   return prerelease ? 'beta' : 'release';
 }
 
+// CurseForge files page filtered to the matching release type. Their query
+// param uses the same names we do (alpha / beta / release).
+export function buildCurseforgeUrl(
+  slug: string,
+  channel: ReleaseChannel
+): string {
+  return `https://www.curseforge.com/wow/addons/${slug}/files?releaseType=${channel}`;
+}
+
+// Wago versions page filtered by stability. Note the naming difference: Wago
+// uses "stable" rather than "release" for the stable channel.
+export function buildWagoUrl(slug: string, channel: ReleaseChannel): string {
+  const stability = channel === 'release' ? 'stable' : channel;
+  return `https://addons.wago.io/addons/${slug}/versions?stability=${stability}`;
+}
+
+function buildDownloadLinks(
+  cog: CogChannel,
+  channel: ReleaseChannel
+): string[] {
+  const out: string[] = [];
+  if (cog.curseforgeSlug) {
+    out.push(`[CurseForge](${buildCurseforgeUrl(cog.curseforgeSlug, channel)})`);
+  }
+  if (cog.wagoSlug) {
+    out.push(`[Wago](${buildWagoUrl(cog.wagoSlug, channel)})`);
+  }
+  return out;
+}
+
 export async function handleReleaseEvent(
   payload: ReleasePayload,
   deps: TicketsModuleDeps
@@ -143,7 +173,7 @@ export async function draftAndPost(
     tag: payload.release.tag_name,
     title: payload.release.name ?? payload.release.tag_name,
     releaseUrl: payload.release.html_url,
-    downloadUrl: cog.downloadInfoUrl,
+    downloadLinks: buildDownloadLinks(cog, channelKind),
     channelKind,
     issues,
   });
@@ -268,18 +298,18 @@ export function composeDraft(input: {
   tag: string;
   title: string;
   releaseUrl: string;
-  downloadUrl: string | null;
+  downloadLinks: string[];
   channelKind: ReleaseChannel;
   issues: ClosedIssue[];
 }): string {
-  const { repoName, tag, releaseUrl, downloadUrl, channelKind, issues } = input;
+  const { repoName, tag, releaseUrl, downloadLinks, channelKind, issues } = input;
   const badge = CHANNEL_BADGE[channelKind];
   const lines: string[] = [];
   lines.push(`**${repoName} ${tag}** · ${badge}`);
-  if (downloadUrl) {
-    lines.push(`[Download / install info](${downloadUrl})`);
-  }
-  lines.push(`[Release on GitHub](${releaseUrl})`);
+  const linksLine = [...downloadLinks, `[GitHub release](${releaseUrl})`].join(
+    ' · '
+  );
+  lines.push(linksLine);
   lines.push('');
   lines.push("_Edit this draft to add theme headers and connective copy. Bullets below come from each issue's `## Player summary` section._");
   lines.push('');
@@ -696,9 +726,11 @@ function buildThreadFollowup(
   row: ReleaseAnnouncement,
   cog: CogChannel
 ): string {
+  const channelKind = row.channel as ReleaseChannel;
   const parts = [`📦 Fixed in [${row.tag}](${row.releaseUrl})`];
-  const downloadUrl = cog.downloadInfoUrl;
-  if (downloadUrl) parts.push(`· [where to get it](${downloadUrl})`);
+  for (const link of buildDownloadLinks(cog, channelKind)) {
+    parts.push(`· ${link}`);
+  }
   return parts.join(' ');
 }
 
@@ -761,7 +793,7 @@ export async function redraftRelease(
     tag: release.tag_name,
     title: release.name ?? release.tag_name,
     releaseUrl: release.html_url,
-    downloadUrl: cog.downloadInfoUrl,
+    downloadLinks: buildDownloadLinks(cog, channelKind),
     channelKind,
     issues,
   });

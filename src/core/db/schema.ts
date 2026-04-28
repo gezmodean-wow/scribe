@@ -66,7 +66,8 @@ export const cogChannels = pgTable('cog_channels', {
     length: 32,
   }),
   releaseReviewChannelId: varchar('release_review_channel_id', { length: 32 }),
-  downloadInfoUrl: text('download_info_url'),
+  curseforgeSlug: text('curseforge_slug'),
+  wagoSlug: text('wago_slug'),
   createdAt: timestamp('created_at', { withTimezone: true })
     .defaultNow()
     .notNull(),
