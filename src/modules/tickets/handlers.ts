@@ -13,6 +13,7 @@ import {
   linkChannel,
   listChannels,
   replaceMappings,
+  setReleaseConfig,
   setStatusMapping,
   setTagMapping,
   unlinkChannel,
@@ -21,6 +22,7 @@ import {
   type CogChannel,
 } from './channels.js';
 import type { TicketsModuleDeps } from './index.js';
+import { redraftRelease } from './releases.js';
 import {
   applyStatusTag,
   resolveStatusKey,
@@ -810,6 +812,183 @@ async function fetchAllForumThreads(
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export async function handleCogReleaseSet(
+  interaction: ChatInputCommandInteraction,
+  deps: TicketsModuleDeps
+) {
+  const channel = interaction.options.getChannel('channel', true);
+  const announce = interaction.options.getChannel('announce', false);
+  const review = interaction.options.getChannel('review', false);
+  const downloadUrl = interaction.options.getString('download_url', false);
+
+  if (channel.type !== ChannelType.GuildForum) {
+    await interaction.reply({
+      content: 'Pick a forum channel.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (!announce && !review && !downloadUrl) {
+    await interaction.reply({
+      content:
+        'Provide at least one of `announce`, `review`, or `download_url`.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const cog = await findCogForChannel(deps.db, channel.id);
+  if (!cog) {
+    await interaction.editReply(
+      'This channel isn\'t linked to a cog repository. Run `/cog-link` first.'
+    );
+    return;
+  }
+
+  const fields: Parameters<typeof setReleaseConfig>[2] = {};
+  if (announce) fields.releaseAnnounceChannelId = announce.id;
+  if (review) fields.releaseReviewChannelId = review.id;
+  if (downloadUrl !== null) fields.downloadInfoUrl = downloadUrl;
+
+  await setReleaseConfig(deps.db, channel.id, fields);
+
+  const lines = [`Updated release config on <#${channel.id}>:`];
+  if (announce) lines.push(`• announce → <#${announce.id}>`);
+  if (review) lines.push(`• review → <#${review.id}>`);
+  if (downloadUrl) lines.push(`• download → ${downloadUrl}`);
+  await interaction.editReply(lines.join('\n'));
+}
+
+export async function handleCogReleaseClear(
+  interaction: ChatInputCommandInteraction,
+  deps: TicketsModuleDeps
+) {
+  const channel = interaction.options.getChannel('channel', true);
+  const field = interaction.options.getString('field', true);
+
+  if (channel.type !== ChannelType.GuildForum) {
+    await interaction.reply({
+      content: 'Pick a forum channel.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const cog = await findCogForChannel(deps.db, channel.id);
+  if (!cog) {
+    await interaction.editReply('This channel isn\'t linked.');
+    return;
+  }
+
+  const fields: Parameters<typeof setReleaseConfig>[2] = {};
+  if (field === 'announce' || field === 'all') {
+    fields.releaseAnnounceChannelId = null;
+  }
+  if (field === 'review' || field === 'all') {
+    fields.releaseReviewChannelId = null;
+  }
+  if (field === 'download_url' || field === 'all') {
+    fields.downloadInfoUrl = null;
+  }
+  await setReleaseConfig(deps.db, channel.id, fields);
+  await interaction.editReply(`Cleared ${field} on <#${channel.id}>.`);
+}
+
+export async function handleCogReleaseShow(
+  interaction: ChatInputCommandInteraction,
+  deps: TicketsModuleDeps
+) {
+  const channel = interaction.options.getChannel('channel', true);
+
+  if (channel.type !== ChannelType.GuildForum) {
+    await interaction.reply({
+      content: 'Pick a forum channel.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const cog = await findCogForChannel(deps.db, channel.id);
+  if (!cog) {
+    await interaction.editReply('This channel isn\'t linked.');
+    return;
+  }
+
+  const lines = [
+    `Release config for <#${channel.id}> (**${cog.githubOwner}/${cog.githubRepo}**):`,
+    `• announce: ${cog.releaseAnnounceChannelId ? `<#${cog.releaseAnnounceChannelId}>` : '_(unset)_'}`,
+    `• review: ${cog.releaseReviewChannelId ? `<#${cog.releaseReviewChannelId}>` : '_(unset)_'}`,
+    `• download: ${cog.downloadInfoUrl ?? '_(unset)_'}`,
+  ];
+  await interaction.editReply(lines.join('\n'));
+}
+
+export async function handleReleaseRedraft(
+  interaction: ChatInputCommandInteraction,
+  deps: TicketsModuleDeps
+) {
+  const channel = interaction.options.getChannel('channel', true);
+  const tag = interaction.options.getString('tag', true);
+  const repost = interaction.options.getBoolean('repost', false) ?? false;
+
+  if (channel.type !== ChannelType.GuildForum) {
+    await interaction.reply({
+      content: 'Pick a forum channel.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const cog = await findCogForChannel(deps.db, channel.id);
+  if (!cog) {
+    await interaction.editReply(
+      'This channel isn\'t linked to a cog repository. Run `/cog-link` first.'
+    );
+    return;
+  }
+
+  const result = await redraftRelease(cog, tag, repost, deps, deps.discord);
+
+  if (result.kind === 'error') {
+    await interaction.editReply(result.message);
+    return;
+  }
+  switch (result.kind) {
+    case 'drafted':
+      await interaction.editReply(
+        `Drafted \`${result.row.tag}\` in <#${result.row.reviewChannelId}>.`
+      );
+      break;
+    case 'pending-refreshed':
+      await interaction.editReply(
+        `Refreshed pending draft for \`${result.row.tag}\`.`
+      );
+      break;
+    case 'announce-edited':
+      await interaction.editReply(
+        `Edited published announcement for \`${result.row.tag}\` in place.`
+      );
+      break;
+    case 'announce-reposted':
+      await interaction.editReply(
+        `Reposted announcement for \`${result.row.tag}\` · ${result.fanout.posted} thread followup(s)` +
+          (result.fanout.skipped > 0
+            ? ` (${result.fanout.skipped} skipped)`
+            : '')
+      );
+      break;
+  }
 }
 
 export async function handleTagAutocomplete(

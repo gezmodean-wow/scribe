@@ -1,8 +1,10 @@
 import {
+  boolean,
   integer,
   jsonb,
   pgTable,
   serial,
+  text,
   timestamp,
   uniqueIndex,
   varchar,
@@ -60,6 +62,11 @@ export const cogChannels = pgTable('cog_channels', {
     .$type<Record<string, string>>()
     .notNull()
     .default({}),
+  releaseAnnounceChannelId: varchar('release_announce_channel_id', {
+    length: 32,
+  }),
+  releaseReviewChannelId: varchar('release_review_channel_id', { length: 32 }),
+  downloadInfoUrl: text('download_info_url'),
   createdAt: timestamp('created_at', { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -70,3 +77,40 @@ export const cogChannels = pgTable('cog_channels', {
 
 export type CogChannel = typeof cogChannels.$inferSelect;
 export type NewCogChannel = typeof cogChannels.$inferInsert;
+
+export const releaseAnnouncements = pgTable(
+  'release_announcements',
+  {
+    id: serial('id').primaryKey(),
+    githubOwner: varchar('github_owner', { length: 64 }).notNull(),
+    githubRepo: varchar('github_repo', { length: 100 }).notNull(),
+    tag: varchar('tag', { length: 100 }).notNull(),
+    githubReleaseId: varchar('github_release_id', { length: 32 }),
+    releaseUrl: text('release_url').notNull(),
+    channel: varchar('channel', { length: 16 }).notNull(),
+    prerelease: boolean('prerelease').notNull().default(false),
+    status: varchar('status', { length: 16 }).notNull().default('pending'),
+    reviewChannelId: varchar('review_channel_id', { length: 32 }),
+    reviewMessageId: varchar('review_message_id', { length: 32 }),
+    announceChannelId: varchar('announce_channel_id', { length: 32 }),
+    announceMessageId: varchar('announce_message_id', { length: 32 }),
+    draftBody: text('draft_body').notNull(),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex('release_announcements_repo_tag_unique').on(
+      t.githubOwner,
+      t.githubRepo,
+      t.tag
+    ),
+  ]
+);
+
+export type ReleaseAnnouncement = typeof releaseAnnouncements.$inferSelect;
+export type NewReleaseAnnouncement = typeof releaseAnnouncements.$inferInsert;

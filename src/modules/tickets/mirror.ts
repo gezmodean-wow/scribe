@@ -3,6 +3,8 @@ import { and, eq } from 'drizzle-orm';
 import { threadIssueMap } from '../../core/db/schema.js';
 import { findCogForChannel, type CogChannel } from './channels.js';
 import type { TicketsModuleDeps } from './index.js';
+import { extractPlayerSummary } from './release-notes.js';
+import { handleReleaseEvent } from './releases.js';
 import { applyStatusTag, resolveStatusKey } from './status.js';
 
 export function registerMirror(deps: TicketsModuleDeps) {
@@ -74,6 +76,7 @@ type IssuesPayload = {
     html_url: string;
     state: string;
     state_reason?: string | null;
+    body?: string | null;
     labels?: Array<{ name: string }>;
   };
   repository: { name: string; full_name: string; owner: { login: string } };
@@ -98,6 +101,14 @@ export async function handleGithubMirror(
     else if (p.action === 'labeled' || p.action === 'unlabeled') {
       await handleIssueLabelChange(p, deps);
     }
+    return;
+  }
+  if (event === 'release') {
+    await handleReleaseEvent(
+      payload as Parameters<typeof handleReleaseEvent>[0],
+      deps
+    );
+    return;
   }
 }
 
@@ -141,8 +152,12 @@ async function announceIssueClosed(
   const { thread, cog } = found;
 
   const reason = stateReasonSuffix(payload.issue.state_reason);
+  const summary = extractPlayerSummary({ body: payload.issue.body });
+  const summaryLine = summary ? `\n\n> ${summary}` : '';
   await thread
-    .send(`✅ This issue has been closed${reason}.\n${payload.issue.html_url}`)
+    .send(
+      `✅ This issue has been closed${reason}.${summaryLine}\n${payload.issue.html_url}`
+    )
     .catch((err) => {
       deps.log.warn(
         { err, threadId: thread.id },

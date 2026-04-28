@@ -1,4 +1,4 @@
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import type { Database } from '../../core/db/client.js';
 import { cogChannels, type CogChannel } from '../../core/db/schema.js';
 
@@ -138,4 +138,49 @@ export async function unsetStatusMapping(
     .where(eq(cogChannels.discordChannelId, discordChannelId))
     .returning();
   return row;
+}
+
+export async function setReleaseConfig(
+  db: Database,
+  discordChannelId: string,
+  fields: {
+    releaseAnnounceChannelId?: string | null;
+    releaseReviewChannelId?: string | null;
+    downloadInfoUrl?: string | null;
+  }
+): Promise<CogChannel | undefined> {
+  const set: Record<string, unknown> = { updatedAt: new Date() };
+  if (fields.releaseAnnounceChannelId !== undefined) {
+    set.releaseAnnounceChannelId = fields.releaseAnnounceChannelId;
+  }
+  if (fields.releaseReviewChannelId !== undefined) {
+    set.releaseReviewChannelId = fields.releaseReviewChannelId;
+  }
+  if (fields.downloadInfoUrl !== undefined) {
+    set.downloadInfoUrl = fields.downloadInfoUrl;
+  }
+  const [row] = await db
+    .update(cogChannels)
+    .set(set)
+    .where(eq(cogChannels.discordChannelId, discordChannelId))
+    .returning();
+  return row;
+}
+
+export async function findCogByRepo(
+  db: Database,
+  githubOwner: string,
+  githubRepo: string
+): Promise<CogChannel | undefined> {
+  const rows = await db
+    .select()
+    .from(cogChannels)
+    .where(
+      and(
+        eq(cogChannels.githubOwner, githubOwner),
+        eq(cogChannels.githubRepo, githubRepo)
+      )
+    )
+    .limit(1);
+  return rows[0];
 }

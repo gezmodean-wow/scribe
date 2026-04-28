@@ -277,4 +277,106 @@ export const ticketsCommands: RESTPostAPIApplicationCommandsJSONBody[] = [
         .setRequired(true)
     )
     .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('cog-release-set')
+    .setDescription(
+      'Configure release announce/review channels + download URL for a linked cog.'
+    )
+    .setDMPermission(false)
+    .addChannelOption((o) =>
+      o
+        .setName('channel')
+        .setDescription('Forum channel of the linked cog')
+        .addChannelTypes(ChannelType.GuildForum)
+        .setRequired(true)
+    )
+    .addChannelOption((o) =>
+      o
+        .setName('announce')
+        .setDescription('Public channel for release announcements')
+        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+        .setRequired(false)
+    )
+    .addChannelOption((o) =>
+      o
+        .setName('review')
+        .setDescription('Staff channel for draft review')
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(false)
+    )
+    .addStringOption((o) =>
+      o
+        .setName('download_url')
+        .setDescription('Link players follow to install/update (CF, Wago, etc.)')
+        .setRequired(false)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('cog-release-clear')
+    .setDescription('Clear release configuration fields on a linked cog.')
+    .setDMPermission(false)
+    .addChannelOption((o) =>
+      o
+        .setName('channel')
+        .setDescription('Forum channel of the linked cog')
+        .addChannelTypes(ChannelType.GuildForum)
+        .setRequired(true)
+    )
+    .addStringOption((o) =>
+      o
+        .setName('field')
+        .setDescription('Which field to clear')
+        .setRequired(true)
+        .addChoices(
+          { name: 'announce channel', value: 'announce' },
+          { name: 'review channel', value: 'review' },
+          { name: 'download URL', value: 'download_url' },
+          { name: 'all release fields', value: 'all' }
+        )
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('cog-release-show')
+    .setDescription('Show release configuration for a linked cog.')
+    .setDMPermission(false)
+    .addChannelOption((o) =>
+      o
+        .setName('channel')
+        .setDescription('Forum channel of the linked cog')
+        .addChannelTypes(ChannelType.GuildForum)
+        .setRequired(true)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('release-redraft')
+    .setDescription(
+      'Redraft a release announcement (refresh from current issue summaries).'
+    )
+    .setDMPermission(false)
+    .addChannelOption((o) =>
+      o
+        .setName('channel')
+        .setDescription('Forum channel of the linked cog')
+        .addChannelTypes(ChannelType.GuildForum)
+        .setRequired(true)
+    )
+    .addStringOption((o) =>
+      o
+        .setName('tag')
+        .setDescription('Release tag (e.g. v0.12.0-alpha1)')
+        .setRequired(true)
+    )
+    .addBooleanOption((o) =>
+      o
+        .setName('repost')
+        .setDescription(
+          'Post a fresh announce message instead of editing in place (pings subscribers).'
+        )
+        .setRequired(false)
+    )
+    .toJSON(),
 ];

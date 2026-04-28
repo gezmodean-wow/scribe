@@ -4,12 +4,21 @@ import type {
   GuildMember,
 } from 'discord.js';
 import {
+  EDIT_MODAL_PREFIX,
+  handleReleaseButton,
+  handleReleaseModalSubmit,
+  isReleaseButtonId,
+} from './releases.js';
+import {
   handleCogBackfill,
   handleCogCopyConfig,
   handleCogLabelSet,
   handleCogLabelUnset,
   handleCogLink,
   handleCogList,
+  handleCogReleaseClear,
+  handleCogReleaseSet,
+  handleCogReleaseShow,
   handleCogStatusList,
   handleCogStatusSet,
   handleCogStatusUnset,
@@ -17,6 +26,7 @@ import {
   handleCogTagSet,
   handleCogTagUnset,
   handleCogUnlink,
+  handleReleaseRedraft,
   handleTagAutocomplete,
   handleTrack,
 } from './handlers.js';
@@ -42,6 +52,10 @@ const HANDLERS: Record<string, Handler> = {
   'cog-label-unset': handleCogLabelUnset,
   'cog-backfill': handleCogBackfill,
   'cog-copy-config': handleCogCopyConfig,
+  'cog-release-set': handleCogReleaseSet,
+  'cog-release-clear': handleCogReleaseClear,
+  'cog-release-show': handleCogReleaseShow,
+  'release-redraft': handleReleaseRedraft,
 };
 
 const AUTOCOMPLETE_COMMANDS = new Set([
@@ -57,6 +71,59 @@ export function registerTicketsInteractions(deps: TicketsModuleDeps) {
       if (AUTOCOMPLETE_COMMANDS.has(interaction.commandName)) {
         await handleTagAutocomplete(interaction, deps).catch((err) =>
           deps.log.warn({ err }, 'autocomplete failed')
+        );
+      }
+      return;
+    }
+
+    if (interaction.isButton() && isReleaseButtonId(interaction.customId)) {
+      if (
+        !isAuthorized(interaction.member, deps.config.discord.staffRoleIds)
+      ) {
+        await interaction.reply({
+          content: "You don't have permission to use this control.",
+          ephemeral: true,
+        });
+        return;
+      }
+      try {
+        await handleReleaseButton(interaction, deps);
+      } catch (err) {
+        deps.log.error(
+          { err, customId: interaction.customId },
+          'release button handler failed'
+        );
+        const msg = 'Something went wrong. Check the logs.';
+        if (interaction.replied || interaction.deferred) {
+          await interaction.editReply(msg).catch(() => {});
+        } else {
+          await interaction
+            .reply({ content: msg, ephemeral: true })
+            .catch(() => {});
+        }
+      }
+      return;
+    }
+
+    if (
+      interaction.isModalSubmit() &&
+      interaction.customId.startsWith(EDIT_MODAL_PREFIX)
+    ) {
+      if (
+        !isAuthorized(interaction.member, deps.config.discord.staffRoleIds)
+      ) {
+        await interaction.reply({
+          content: "You don't have permission to edit this draft.",
+          ephemeral: true,
+        });
+        return;
+      }
+      try {
+        await handleReleaseModalSubmit(interaction, deps);
+      } catch (err) {
+        deps.log.error(
+          { err, customId: interaction.customId },
+          'release modal handler failed'
         );
       }
       return;
