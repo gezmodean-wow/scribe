@@ -30,6 +30,12 @@ import {
   handleTagAutocomplete,
   handleTrack,
 } from './handlers.js';
+import {
+  handleCogImportIssues,
+  handleImportButton,
+  handleImportSelect,
+  isImportComponentId,
+} from './import.js';
 import type { TicketsModuleDeps } from './index.js';
 
 type Handler = (
@@ -51,6 +57,7 @@ const HANDLERS: Record<string, Handler> = {
   'cog-label-set': handleCogLabelSet,
   'cog-label-unset': handleCogLabelUnset,
   'cog-backfill': handleCogBackfill,
+  'cog-import-issues': handleCogImportIssues,
   'cog-copy-config': handleCogCopyConfig,
   'cog-release-set': handleCogReleaseSet,
   'cog-release-clear': handleCogReleaseClear,
@@ -92,6 +99,59 @@ export function registerTicketsInteractions(deps: TicketsModuleDeps) {
         deps.log.error(
           { err, customId: interaction.customId },
           'release button handler failed'
+        );
+        const msg = 'Something went wrong. Check the logs.';
+        if (interaction.replied || interaction.deferred) {
+          await interaction.editReply(msg).catch(() => {});
+        } else {
+          await interaction
+            .reply({ content: msg, ephemeral: true })
+            .catch(() => {});
+        }
+      }
+      return;
+    }
+
+    if (
+      interaction.isStringSelectMenu() &&
+      isImportComponentId(interaction.customId)
+    ) {
+      if (
+        !isAuthorized(interaction.member, deps.config.discord.staffRoleIds)
+      ) {
+        await interaction.reply({
+          content: "You don't have permission to use this control.",
+          ephemeral: true,
+        });
+        return;
+      }
+      try {
+        await handleImportSelect(interaction);
+      } catch (err) {
+        deps.log.error(
+          { err, customId: interaction.customId },
+          'import select handler failed'
+        );
+      }
+      return;
+    }
+
+    if (interaction.isButton() && isImportComponentId(interaction.customId)) {
+      if (
+        !isAuthorized(interaction.member, deps.config.discord.staffRoleIds)
+      ) {
+        await interaction.reply({
+          content: "You don't have permission to use this control.",
+          ephemeral: true,
+        });
+        return;
+      }
+      try {
+        await handleImportButton(interaction, deps);
+      } catch (err) {
+        deps.log.error(
+          { err, customId: interaction.customId },
+          'import button handler failed'
         );
         const msg = 'Something went wrong. Check the logs.';
         if (interaction.replied || interaction.deferred) {

@@ -279,6 +279,32 @@ export const ticketsCommands: RESTPostAPIApplicationCommandsJSONBody[] = [
     .toJSON(),
 
   new SlashCommandBuilder()
+    .setName('cog-import-issues')
+    .setDescription(
+      'Import existing GitHub issues as Discord threads (clickable picker).'
+    )
+    .setDMPermission(false)
+    .addChannelOption((o) =>
+      o
+        .setName('channel')
+        .setDescription('Linked forum channel to import into')
+        .addChannelTypes(ChannelType.GuildForum)
+        .setRequired(true)
+    )
+    .addStringOption((o) =>
+      o
+        .setName('state')
+        .setDescription('Issue state to list (default: open)')
+        .setRequired(false)
+        .addChoices(
+          { name: 'open (default)', value: 'open' },
+          { name: 'closed', value: 'closed' },
+          { name: 'all', value: 'all' }
+        )
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
     .setName('cog-release-set')
     .setDescription(
       'Configure release announce/review channels + CF/Wago slugs for a linked cog.'
