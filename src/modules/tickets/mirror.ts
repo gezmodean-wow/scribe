@@ -7,49 +7,6 @@ import { extractPlayerSummary } from './release-notes.js';
 import { handleReleaseEvent } from './releases.js';
 import { applyStatusTag, resolveStatusKey } from './status.js';
 
-export function registerMirror(deps: TicketsModuleDeps) {
-  deps.discord.on('messageCreate', (message) => {
-    void mirrorDiscordToGithub(message, deps).catch((err) => {
-      deps.log.error(
-        { err, messageId: message.id },
-        'discord → github mirror failed'
-      );
-    });
-  });
-}
-
-async function mirrorDiscordToGithub(
-  message: Message,
-  deps: TicketsModuleDeps
-) {
-  if (message.author.bot) return;
-  if (!message.inGuild()) return;
-  if (!message.channel.isThread()) return;
-
-  const thread = message.channel as ThreadChannel;
-  const [row] = await deps.db
-    .select()
-    .from(threadIssueMap)
-    .where(eq(threadIssueMap.discordThreadId, thread.id))
-    .limit(1);
-  if (!row) return;
-
-  const body = await formatDiscordForGithub(message, deps.log);
-  await deps.github.rest.issues.createComment({
-    owner: row.githubOwner,
-    repo: row.githubRepo,
-    issue_number: row.githubIssueNumber,
-    body,
-  });
-  deps.log.info(
-    {
-      threadId: thread.id,
-      issue: `${row.githubOwner}/${row.githubRepo}#${row.githubIssueNumber}`,
-    },
-    'mirrored discord → github'
-  );
-}
-
 // Discord CDN URLs are signed with `ex=` epoch and expire; inlining preserves the evidence.
 const TEXT_INLINE_CAP_BYTES = 64 * 1024;
 const TEXT_INLINE_HEAD_BYTES = 32 * 1024;
@@ -113,7 +70,7 @@ async function fetchTextAttachment(att: Attachment): Promise<FetchedText> {
   };
 }
 
-async function formatDiscordForGithub(
+export async function formatDiscordForGithub(
   message: Message,
   log: TicketsModuleDeps['log']
 ): Promise<string> {

@@ -36,6 +36,7 @@ import {
   handleImportSelect,
   isImportComponentId,
 } from './import.js';
+import { handleTranscriptCommand } from './transcript.js';
 import type { TicketsModuleDeps } from './index.js';
 
 type Handler = (
@@ -63,6 +64,7 @@ const HANDLERS: Record<string, Handler> = {
   'cog-release-clear': handleCogReleaseClear,
   'cog-release-show': handleCogReleaseShow,
   'release-redraft': handleReleaseRedraft,
+  transcript: handleTranscriptCommand,
 };
 
 const AUTOCOMPLETE_COMMANDS = new Set([

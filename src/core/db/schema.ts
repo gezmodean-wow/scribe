@@ -1,5 +1,6 @@
 import {
   boolean,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -115,3 +116,42 @@ export const releaseAnnouncements = pgTable(
 
 export type ReleaseAnnouncement = typeof releaseAnnouncements.$inferSelect;
 export type NewReleaseAnnouncement = typeof releaseAnnouncements.$inferInsert;
+
+export const threadTranscripts = pgTable(
+  'thread_transcripts',
+  {
+    id: serial('id').primaryKey(),
+    discordThreadId: varchar('discord_thread_id', { length: 32 }).notNull(),
+    discordMessageId: varchar('discord_message_id', { length: 32 })
+      .notNull()
+      .unique(),
+    discordAuthorId: varchar('discord_author_id', { length: 32 }).notNull(),
+    discordAuthorName: varchar('discord_author_name', { length: 100 }).notNull(),
+    content: text('content').notNull().default(''),
+    attachmentsJson: jsonb('attachments_json')
+      .$type<
+        Array<{
+          id: string;
+          url: string;
+          name: string | null;
+          contentType: string | null;
+          size: number;
+        }>
+      >()
+      .notNull()
+      .default([]),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+    promotedAt: timestamp('promoted_at', { withTimezone: true }),
+    promotedBy: varchar('promoted_by', { length: 32 }),
+    githubCommentId: varchar('github_comment_id', { length: 32 }),
+  },
+  (t) => [
+    index('thread_transcripts_thread_created_idx').on(
+      t.discordThreadId,
+      t.createdAt
+    ),
+  ]
+);
+
+export type ThreadTranscript = typeof threadTranscripts.$inferSelect;
+export type NewThreadTranscript = typeof threadTranscripts.$inferInsert;

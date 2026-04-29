@@ -279,6 +279,14 @@ export const ticketsCommands: RESTPostAPIApplicationCommandsJSONBody[] = [
     .toJSON(),
 
   new SlashCommandBuilder()
+    .setName('transcript')
+    .setDescription(
+      'Post the full Discord transcript for this thread as a comment on the linked issue.'
+    )
+    .setDMPermission(false)
+    .toJSON(),
+
+  new SlashCommandBuilder()
     .setName('cog-import-issues')
     .setDescription(
       'Import existing GitHub issues as Discord threads (clickable picker).'

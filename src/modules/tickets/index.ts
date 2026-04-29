@@ -6,7 +6,7 @@ import type { HttpServer } from '../../core/http.js';
 import type { Logger } from '../../core/logger.js';
 import { registerGithubWebhooks } from './github-webhooks.js';
 import { registerTicketsInteractions } from './interactions.js';
-import { registerMirror } from './mirror.js';
+import { registerTranscriptModule } from './transcript.js';
 
 export type TicketsModuleDeps = {
   log: Logger;
@@ -20,6 +20,6 @@ export type TicketsModuleDeps = {
 export function registerTicketsModule(deps: TicketsModuleDeps) {
   registerGithubWebhooks(deps);
   registerTicketsInteractions(deps);
-  registerMirror(deps);
+  registerTranscriptModule(deps);
   deps.log.info('Tickets module registered');
 }
