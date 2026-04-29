@@ -1,4 +1,4 @@
-import type { Message, ThreadChannel } from 'discord.js';
+import type { Attachment, Message, ThreadChannel } from 'discord.js';
 import { and, eq } from 'drizzle-orm';
 import { threadIssueMap } from '../../core/db/schema.js';
 import { findCogForChannel, type CogChannel } from './channels.js';
@@ -34,7 +34,7 @@ async function mirrorDiscordToGithub(
     .limit(1);
   if (!row) return;
 
-  const body = formatDiscordForGithub(message);
+  const body = await formatDiscordForGithub(message, deps.log);
   await deps.github.rest.issues.createComment({
     owner: row.githubOwner,
     repo: row.githubRepo,
@@ -50,15 +50,113 @@ async function mirrorDiscordToGithub(
   );
 }
 
-function formatDiscordForGithub(message: Message): string {
-  const attachments =
-    message.attachments.size > 0
-      ? '\n\n' +
-        [...message.attachments.values()]
-          .map((a) => `Attachment: ${a.url}`)
-          .join('\n')
-      : '';
-  return `**${message.author.username}** (via Discord):\n\n${message.content || '_(no text content)_'}${attachments}`;
+// Discord CDN URLs are signed with `ex=` epoch and expire; inlining preserves the evidence.
+const TEXT_INLINE_CAP_BYTES = 64 * 1024;
+const TEXT_INLINE_HEAD_BYTES = 32 * 1024;
+const TEXT_INLINE_TAIL_BYTES = 32 * 1024;
+
+const TEXT_INLINE_CONTENT_TYPES = new Set([
+  'application/json',
+  'application/yaml',
+  'application/x-yaml',
+]);
+const TEXT_INLINE_FILENAME_RE = /\.(lua|log|txt)$/i;
+
+function isTextLikeAttachment(att: Attachment): boolean {
+  const ct = att.contentType?.toLowerCase().split(';')[0]?.trim() ?? '';
+  if (ct.startsWith('text/')) return true;
+  if (TEXT_INLINE_CONTENT_TYPES.has(ct)) return true;
+  if (att.name && TEXT_INLINE_FILENAME_RE.test(att.name)) return true;
+  return false;
+}
+
+function langHint(name: string | null): string {
+  const n = (name ?? '').toLowerCase();
+  if (n.endsWith('.lua')) return 'lua';
+  if (n.endsWith('.json')) return 'json';
+  if (n.endsWith('.yaml') || n.endsWith('.yml')) return 'yaml';
+  return '';
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} bytes`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+type FetchedText = {
+  body: string;
+  truncated: boolean;
+  originalBytes: number;
+};
+
+async function fetchTextAttachment(att: Attachment): Promise<FetchedText> {
+  const res = await fetch(att.url);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} fetching ${att.name ?? 'attachment'}`);
+  }
+  const buf = Buffer.from(await res.arrayBuffer());
+  const originalBytes = buf.length;
+  if (originalBytes <= TEXT_INLINE_CAP_BYTES) {
+    return { body: buf.toString('utf8'), truncated: false, originalBytes };
+  }
+  const head = buf.subarray(0, TEXT_INLINE_HEAD_BYTES).toString('utf8');
+  const tail = buf
+    .subarray(originalBytes - TEXT_INLINE_TAIL_BYTES)
+    .toString('utf8');
+  const omitted =
+    originalBytes - TEXT_INLINE_HEAD_BYTES - TEXT_INLINE_TAIL_BYTES;
+  return {
+    body: `${head}\n\n... [truncated ${formatBytes(omitted)}] ...\n\n${tail}`,
+    truncated: true,
+    originalBytes,
+  };
+}
+
+async function formatDiscordForGithub(
+  message: Message,
+  log: TicketsModuleDeps['log']
+): Promise<string> {
+  const header = `**${message.author.username}** (via Discord):`;
+  const body = message.content || '_(no text content)_';
+
+  const attachments = [...message.attachments.values()];
+  const fetched = await Promise.all(
+    attachments.map(async (att): Promise<FetchedText | 'skip' | 'error'> => {
+      if (!isTextLikeAttachment(att)) return 'skip';
+      try {
+        return await fetchTextAttachment(att);
+      } catch (err) {
+        log.warn(
+          { err, name: att.name, url: att.url },
+          'failed to inline text attachment, falling back to link'
+        );
+        return 'error';
+      }
+    })
+  );
+
+  const lines: string[] = [header, '', body];
+
+  for (const [i, att] of attachments.entries()) {
+    const result = fetched[i]!;
+    lines.push('');
+    if (result === 'skip' || result === 'error') {
+      lines.push(`Attachment: ${att.url}`);
+      continue;
+    }
+    const lang = langHint(att.name);
+    const sizeNote = `${formatBytes(result.originalBytes)}${result.truncated ? ', truncated' : ''}`;
+    lines.push(
+      `**Attachment:** \`${att.name ?? 'file'}\` (${sizeNote}) — [original](${att.url})`
+    );
+    // Tilde fence avoids collisions with backtick fences inside log output.
+    lines.push('~~~' + lang);
+    lines.push(result.body);
+    lines.push('~~~');
+  }
+
+  return lines.join('\n');
 }
 
 type IssueCommentPayload = {
