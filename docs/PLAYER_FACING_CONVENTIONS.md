@@ -1,18 +1,18 @@
 # Player-facing conventions
 
-**Canonical source.** Each cog repo's `CLAUDE.md` should fetch this file at the start of any session involving releases, closing issues, or writing GitHub comments meant to reach players. Don't restate these rules in cog docs — link here so updates stay in one place.
+**Canonical source.** Each cog repo's `CLAUDE.md` fetches this file at the start of any session involving releases, closing issues, or writing GitHub comments meant to reach players. Don't restate these rules in cog docs — link here so updates stay in one place.
 
-The file lives in the private `gezmodean-wow/scribe` repo. Cog sessions fetch it via:
+Fetch URL (scribe is public, no auth needed):
 
-```sh
-gh api -H "Accept: application/vnd.github.raw" \
-  repos/gezmodean-wow/scribe/contents/docs/PLAYER_FACING_CONVENTIONS.md
+```
+https://raw.githubusercontent.com/gezmodean-wow/scribe/main/docs/PLAYER_FACING_CONVENTIONS.md
 ```
 
 ## Changelog
 
-Cog `CLAUDE.md` files should track the most recent entry they've acknowledged. If the top entry below is newer than the cog's `Last acknowledged` date, the session must prefix its first response with `Standards updated:` plus a one-line summary of each new entry, then update its acknowledged date.
+Cog `CLAUDE.md` files track the most recent entry they've acknowledged. If the top entry below is newer than the cog's `Last acknowledged` code, the session must prefix its first response with `Standards updated:` plus a one-line summary of each new entry, then update the cog's acknowledged code.
 
+- **2026-04-30e** — Scribe repo is now public; canonical doc fetched via plain `WebFetch` against the raw URL above. Previous `gh api` instructions are no longer required (still works, just redundant).
 - **2026-04-30d** — `## Player update` now mirrors the **entire section** under the heading (not just the first paragraph), preserving markdown formatting — multi-step instructions, numbered lists, code blocks, and inline `### sub-headings` all reach the player intact. Section bound is the next h1 or h2 heading, so use h3+ for any structure inside the player-facing block. Long updates that exceed Discord's 2000-char per-message limit are auto-chunked into consecutive messages with a small `_(continued)_` marker on each continuation; nothing is truncated.
 - **2026-04-30c** — Bot/agent feedback path documented. When a bot or agent wants player input on a ticket, post a GitHub comment containing a `## Player update` heading; SCRIBE mirrors the section to the linked Discord thread (with the 📢 marker). Engineering context goes below a separator or a different heading and stays on GitHub. Two gotchas: (1) the comment author must not be a GitHub bot account — `gh` CLI through your PAT works because sender type is `User`, but a GitHub App account would be filtered. (2) Edits don't fire — only `action: created` is mirrored, so write the heading on first save.
 - **2026-04-30b** — Removed unsupported fenced ` ```release-notes ` closing-comment fallback. Player summaries must live in the issue body now; the comment fallback was advertised but never wired into SCRIBE's release draft or close announcement.
