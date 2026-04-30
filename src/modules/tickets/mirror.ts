@@ -192,13 +192,16 @@ async function mirrorIssueCommentToDiscord(
   if (!found) return;
   const { thread } = found;
 
-  const content = formatGithubCommentForDiscord(payload, update);
+  const messages = formatGithubCommentForDiscord(payload, update);
   try {
-    await thread.send(content);
+    for (const content of messages) {
+      await thread.send(content);
+    }
     deps.log.info(
       {
         threadId: thread.id,
         issue: `${payload.repository.full_name}#${payload.issue.number}`,
+        chunks: messages.length,
       },
       'mirrored github → discord'
     );
@@ -393,20 +396,64 @@ async function findThreadAndCog(
   return { thread: channel as ThreadChannel, cog };
 }
 
+// Discord caps a single message at 2000 chars. Long player updates (multi-step
+// instructions, code blocks, etc.) get chunked into consecutive messages so
+// nothing is lost. Header lands on the first chunk only; continuations get a
+// small `_(continued)_` marker so it's obvious they belong together.
+const DISCORD_MESSAGE_CAP = 2000;
+const CONTINUATION_MARKER = '_(continued)_';
+
 function formatGithubCommentForDiscord(
   payload: IssueCommentPayload,
   update: string
-): string {
+): string[] {
   const header = `📢 **${payload.comment.user.login}** (via GitHub · ${payload.repository.full_name}#${payload.issue.number}):`;
-  return `${header}\n${truncate(update, 1800)}`;
+  const firstCap = DISCORD_MESSAGE_CAP - header.length - 1;
+  const restCap = DISCORD_MESSAGE_CAP - CONTINUATION_MARKER.length - 1;
+
+  const parts = chunkForDiscord(update, firstCap, restCap);
+  return parts.map((part, i) =>
+    i === 0 ? `${header}\n${part}` : `${CONTINUATION_MARKER}\n${part}`
+  );
+}
+
+// Split text into chunks that fit Discord's per-message cap, preferring to
+// break at paragraph (\n\n), then line (\n), then word (space) boundaries
+// before falling back to a hard cut.
+export function chunkForDiscord(
+  text: string,
+  firstCap: number,
+  restCap: number
+): string[] {
+  if (text.length <= firstCap) return [text];
+
+  const chunks: string[] = [];
+  let remaining = text;
+  let cap = firstCap;
+
+  while (remaining.length > cap) {
+    const split = pickSplit(remaining, cap);
+    chunks.push(remaining.slice(0, split).trimEnd());
+    remaining = remaining.slice(split).replace(/^\s+/, '');
+    cap = restCap;
+  }
+  if (remaining.length > 0) chunks.push(remaining);
+  return chunks;
+}
+
+function pickSplit(s: string, cap: number): number {
+  // Require the split to land at least halfway through the chunk so a single
+  // run-on paragraph still gets cut near the cap rather than near the start.
+  const minSplit = Math.floor(cap / 2);
+  for (const probe of ['\n\n', '\n', ' ']) {
+    const at = s.lastIndexOf(probe, cap);
+    if (at >= minSplit) return at + probe.length;
+  }
+  return cap;
 }
 
 function stateReasonSuffix(reason?: string | null): string {
   if (reason === 'not_planned') return ' (not planned)';
   if (reason === 'duplicate') return ' (duplicate)';
   return '';
-}
-
-function truncate(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max - 3) + '...' : s;
 }

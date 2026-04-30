@@ -13,7 +13,8 @@ gh api -H "Accept: application/vnd.github.raw" \
 
 Cog `CLAUDE.md` files should track the most recent entry they've acknowledged. If the top entry below is newer than the cog's `Last acknowledged` date, the session must prefix its first response with `Standards updated:` plus a one-line summary of each new entry, then update its acknowledged date.
 
-- **2026-04-30c** — Bot/agent feedback path documented. When a bot or agent wants player input on a ticket, post a GitHub comment containing a `## Player update` heading; SCRIBE mirrors the first paragraph after the heading to the linked Discord thread (with the 📢 marker). Engineering context goes below a separator or a different heading and stays on GitHub. Two gotchas: (1) the comment author must not be a GitHub bot account — `gh` CLI through your PAT works because sender type is `User`, but a GitHub App account would be filtered. (2) Edits don't fire — only `action: created` is mirrored, so write the heading on first save.
+- **2026-04-30d** — `## Player update` now mirrors the **entire section** under the heading (not just the first paragraph), preserving markdown formatting — multi-step instructions, numbered lists, code blocks, and inline `### sub-headings` all reach the player intact. Section bound is the next h1 or h2 heading, so use h3+ for any structure inside the player-facing block. Long updates that exceed Discord's 2000-char per-message limit are auto-chunked into consecutive messages with a small `_(continued)_` marker on each continuation; nothing is truncated.
+- **2026-04-30c** — Bot/agent feedback path documented. When a bot or agent wants player input on a ticket, post a GitHub comment containing a `## Player update` heading; SCRIBE mirrors the section to the linked Discord thread (with the 📢 marker). Engineering context goes below a separator or a different heading and stays on GitHub. Two gotchas: (1) the comment author must not be a GitHub bot account — `gh` CLI through your PAT works because sender type is `User`, but a GitHub App account would be filtered. (2) Edits don't fire — only `action: created` is mirrored, so write the heading on first save.
 - **2026-04-30b** — Removed unsupported fenced ` ```release-notes ` closing-comment fallback. Player summaries must live in the issue body now; the comment fallback was advertised but never wired into SCRIBE's release draft or close announcement.
 - **2026-04-30a** — Initial: `## Player summary` (issue body) and `## Player update` (issue comments) headings introduced.
 
@@ -47,14 +48,25 @@ Format:
 ```markdown
 ## Player update
 
-The first paragraph after this heading is what the player will see in Discord. Keep it short, plain-language, and self-contained.
+The full section under this heading goes to the player in Discord — write as
+much as you need to. Markdown formatting is preserved, so use lists, line
+breaks, and code blocks freely.
+
+To narrow this down, can you do the following:
+
+1. Run `/console scriptProfile 1`
+2. Reload your UI
+3. Reproduce the slowness for ~30 seconds
+4. Run `/fq debug perf` and paste the output below
+
+If the slash command errors, let us know which step failed.
 
 ## Engineering note
 
-Stack traces, hypotheses, links to other tickets — whatever's useful to the next agent reading this issue. Players never see anything below the next heading or blank line.
+Stack traces, hypotheses, links to other tickets — whatever's useful to the next agent reading this issue. Players never see anything below an h1 or h2 heading.
 ```
 
-Same parser rules as Player summary: case-insensitive heading match, first paragraph wins, sections beyond the next heading are dropped from the mirrored snippet.
+Section bound is the next h1 or h2 heading, so `### Steps` or `### Bonus question` inside the player-facing block stay in the player content. Long updates that exceed Discord's 2000-char per-message cap are auto-chunked into consecutive messages with a `_(continued)_` marker; nothing is truncated.
 
 ### Bot/agent gotchas
 
