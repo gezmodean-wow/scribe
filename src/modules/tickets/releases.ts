@@ -188,6 +188,11 @@ export async function draftAndPost(
   );
   if (!reviewChannel) return null;
 
+  // ON CONFLICT DO NOTHING is the authoritative dedupe — the pre-SELECT in
+  // handleReleaseEvent races against itself when GitHub fires `prereleased`
+  // and `published` for the same tag in quick succession (both pass the
+  // SELECT, both attempt to INSERT). Whichever loses the race here gets zero
+  // rows back and bails cleanly without surfacing a unique-constraint error.
   const [row] = await deps.db
     .insert(releaseAnnouncements)
     .values({
@@ -203,8 +208,21 @@ export async function draftAndPost(
       announceChannelId: cog.releaseAnnounceChannelId ?? null,
       draftBody: draft,
     })
+    .onConflictDoNothing({
+      target: [
+        releaseAnnouncements.githubOwner,
+        releaseAnnouncements.githubRepo,
+        releaseAnnouncements.tag,
+      ],
+    })
     .returning();
-  if (!row) return null;
+  if (!row) {
+    deps.log.info(
+      { repo: payload.repository.full_name, tag: payload.release.tag_name },
+      'release draft already exists for tag (concurrent webhook); skipping'
+    );
+    return null;
+  }
 
   const message = await reviewChannel.send({
     embeds: [buildReviewEmbed(row)],
