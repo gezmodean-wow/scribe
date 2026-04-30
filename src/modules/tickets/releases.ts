@@ -161,9 +161,11 @@ export async function draftAndPost(
     payload.release.prerelease
   );
 
-  const issues = await collectClosedIssuesForRelease(
+  const issues = await collectShippedIssuesForRelease(
     payload.repository.owner.login,
     payload.repository.name,
+    payload.release.tag_name,
+    cog.cogIdPrefix,
     payload.release.published_at ?? payload.release.created_at,
     deps
   );
@@ -236,17 +238,82 @@ type ClosedIssue = {
   summary: string | null;
 };
 
-async function collectClosedIssuesForRelease(
+// Issue references in commit messages — what actually shipped between two
+// release tags. Cog convention is `fix(FQ-N): subject` (and similar for other
+// cogs); GitHub also auto-links `Closes #N` / `Fixes #N` / `Resolves #N`.
+async function collectShippedIssuesForRelease(
   owner: string,
   repo: string,
+  thisTag: string,
+  cogIdPrefix: string,
   releasePublishedAt: string,
   deps: TicketsModuleDeps
 ): Promise<ClosedIssue[]> {
+  const commits = await collectCommitsSincePriorRelease(
+    owner,
+    repo,
+    thisTag,
+    releasePublishedAt,
+    deps
+  );
+
+  const escapedPrefix = cogIdPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const idRe = new RegExp(`\\b${escapedPrefix}-(\\d+)\\b`, 'gi');
+  const closeRe = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
+
+  const numbers = new Set<number>();
+  for (const c of commits) {
+    const msg = c.commit.message;
+    let m: RegExpExecArray | null;
+    while ((m = idRe.exec(msg)) !== null) {
+      const n = Number.parseInt(m[1]!, 10);
+      if (!Number.isNaN(n)) numbers.add(n);
+    }
+    while ((m = closeRe.exec(msg)) !== null) {
+      const n = Number.parseInt(m[1]!, 10);
+      if (!Number.isNaN(n)) numbers.add(n);
+    }
+  }
+
+  const collected: ClosedIssue[] = [];
+  for (const n of numbers) {
+    try {
+      const { data: issue } = await deps.github.rest.issues.get({
+        owner,
+        repo,
+        issue_number: n,
+      });
+      if ('pull_request' in issue && issue.pull_request) continue;
+      collected.push({
+        number: issue.number,
+        title: issue.title,
+        htmlUrl: issue.html_url,
+        summary: extractPlayerSummary(issue.body),
+      });
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      if (status !== 404) {
+        deps.log.warn(
+          { err, issueNumber: n, repo: `${owner}/${repo}` },
+          'release: could not fetch issue referenced in commit log'
+        );
+      }
+    }
+  }
+  collected.sort((a, b) => a.number - b.number);
+  return collected;
+}
+
+type CommitInfo = { commit: { message: string } };
+
+async function collectCommitsSincePriorRelease(
+  owner: string,
+  repo: string,
+  thisTag: string,
+  releasePublishedAt: string,
+  deps: TicketsModuleDeps
+): Promise<CommitInfo[]> {
   const releaseDate = new Date(releasePublishedAt);
-  // Look up the prior release on the same channel kind heuristic: just use the
-  // immediately preceding release published before this one. If there isn't
-  // one, fall back to a 30-day window so the first-ever release still gets a
-  // reasonable list rather than every closed issue ever.
   const releases = await deps.github.paginate(
     deps.github.rest.repos.listReleases,
     { owner, repo, per_page: 50 }
@@ -258,39 +325,30 @@ async function collectClosedIssuesForRelease(
         new Date(b.published_at!).getTime() -
         new Date(a.published_at!).getTime()
     )[0];
-  const sinceDate = prior?.published_at
-    ? new Date(prior.published_at)
-    : new Date(releaseDate.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-  const issues = await deps.github.paginate(
-    deps.github.rest.issues.listForRepo,
-    {
+  if (prior?.tag_name) {
+    // GitHub's compare endpoint caps the inline `commits` array at 250. For
+    // the rapid alpha cadence these cogs use that's plenty; if a release ever
+    // exceeds it we'll truncate the older end of the window, which is the
+    // safer direction (newer commits = more likely to be the shipped fix).
+    const { data } = await deps.github.rest.repos.compareCommits({
       owner,
       repo,
-      state: 'closed',
-      since: sinceDate.toISOString(),
-      per_page: 100,
-    }
-  );
-
-  const collected: ClosedIssue[] = [];
-  for (const issue of issues) {
-    if ('pull_request' in issue && issue.pull_request) continue;
-    if (!issue.closed_at) continue;
-    const closedAt = new Date(issue.closed_at);
-    if (closedAt <= sinceDate) continue;
-    if (closedAt > releaseDate) continue;
-
-    const summary = extractPlayerSummary(issue.body);
-    collected.push({
-      number: issue.number,
-      title: issue.title,
-      htmlUrl: issue.html_url,
-      summary,
+      base: prior.tag_name,
+      head: thisTag,
     });
+    return data.commits;
   }
-  collected.sort((a, b) => a.number - b.number);
-  return collected;
+
+  // First-ever release — no prior tag to compare against. Take the most
+  // recent 100 commits reachable from this tag as a one-time bootstrap.
+  const { data } = await deps.github.rest.repos.listCommits({
+    owner,
+    repo,
+    sha: thisTag,
+    per_page: 100,
+  });
+  return data;
 }
 
 export function composeDraft(input: {
@@ -315,7 +373,7 @@ export function composeDraft(input: {
   lines.push('');
 
   if (issues.length === 0) {
-    lines.push('_(no issues closed since the previous release)_');
+    lines.push('_(no issue references found in commits since the previous release)_');
     return lines.join('\n');
   }
 
@@ -782,9 +840,11 @@ export async function redraftRelease(
   }
 
   const channelKind = classifyReleaseChannel(release.tag_name, release.prerelease);
-  const issues = await collectClosedIssuesForRelease(
+  const issues = await collectShippedIssuesForRelease(
     owner,
     repo,
+    release.tag_name,
+    cog.cogIdPrefix,
     release.published_at ?? release.created_at,
     deps
   );
