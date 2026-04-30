@@ -281,7 +281,7 @@ async function collectClosedIssuesForRelease(
     if (closedAt <= sinceDate) continue;
     if (closedAt > releaseDate) continue;
 
-    const summary = extractPlayerSummary({ body: issue.body });
+    const summary = extractPlayerSummary(issue.body);
     collected.push({
       number: issue.number,
       title: issue.title,

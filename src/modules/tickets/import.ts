@@ -344,7 +344,7 @@ async function importOneIssue(
   labelToTag: Map<string, string>,
   deps: TicketsModuleDeps
 ): Promise<void> {
-  const summary = extractPlayerSummary({ body: issue.body });
+  const summary = extractPlayerSummary(issue.body);
   const stub = summary
     ? `Imported from GitHub: ${issue.html_url}\n\n> ${summary}`
     : `Imported from GitHub: ${issue.html_url}`;

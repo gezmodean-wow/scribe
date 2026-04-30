@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { threadIssueMap } from '../../core/db/schema.js';
 import { findCogForChannel, type CogChannel } from './channels.js';
 import type { TicketsModuleDeps } from './index.js';
-import { extractPlayerSummary } from './release-notes.js';
+import { extractPlayerSummary, extractPlayerUpdate } from './release-notes.js';
 import { handleReleaseEvent } from './releases.js';
 import { applyStatusTag, resolveStatusKey } from './status.js';
 
@@ -176,11 +176,23 @@ async function mirrorIssueCommentToDiscord(
   // we'd mirror every such comment back to Discord and double-post.
   if (payload.sender?.type === 'Bot') return;
 
+  const update = extractPlayerUpdate(payload.comment.body);
+  if (!update) {
+    deps.log.debug(
+      {
+        issue: `${payload.repository.full_name}#${payload.issue.number}`,
+        author: payload.comment.user.login,
+      },
+      'github comment has no `## Player update` block; not mirroring'
+    );
+    return;
+  }
+
   const found = await findThreadAndCog(payload, deps);
   if (!found) return;
   const { thread } = found;
 
-  const content = formatGithubCommentForDiscord(payload);
+  const content = formatGithubCommentForDiscord(payload, update);
   try {
     await thread.send(content);
     deps.log.info(
@@ -207,7 +219,7 @@ async function announceIssueClosed(
   const { thread, cog } = found;
 
   const reason = stateReasonSuffix(payload.issue.state_reason);
-  const summary = extractPlayerSummary({ body: payload.issue.body });
+  const summary = extractPlayerSummary(payload.issue.body);
   const summaryLine = summary ? `\n\n> ${summary}` : '';
   await thread
     .send(
@@ -234,6 +246,15 @@ async function announceIssueClosed(
     deps.log.warn(
       { err, threadId: thread.id, statusKey },
       'could not apply status tag'
+    );
+  });
+
+  // Archive after the announcement + tag update so the message lands and the
+  // tag is visible before the thread drops out of the active list.
+  await thread.setArchived(true).catch((err) => {
+    deps.log.warn(
+      { err, threadId: thread.id },
+      'could not archive thread on close'
     );
   });
 }
@@ -281,6 +302,18 @@ async function announceIssueReopened(
   const found = await findThreadAndCog(payload, deps);
   if (!found) return;
   const { thread, cog } = found;
+
+  // Unarchive first so the announcement + tag update apply visibly. Send
+  // alone would auto-unarchive, but doing it explicitly surfaces permission
+  // errors instead of silently hiding the rest of the work.
+  if (thread.archived) {
+    await thread.setArchived(false).catch((err) => {
+      deps.log.warn(
+        { err, threadId: thread.id },
+        'could not unarchive thread on reopen'
+      );
+    });
+  }
 
   await thread.send('🔄 This issue has been reopened.').catch((err) => {
     deps.log.warn(
@@ -360,10 +393,12 @@ async function findThreadAndCog(
   return { thread: channel as ThreadChannel, cog };
 }
 
-function formatGithubCommentForDiscord(payload: IssueCommentPayload): string {
-  const header = `💬 **${payload.comment.user.login}** (via GitHub · ${payload.repository.full_name}#${payload.issue.number}):`;
-  const body = truncate(payload.comment.body, 1800);
-  return `${header}\n${body}`;
+function formatGithubCommentForDiscord(
+  payload: IssueCommentPayload,
+  update: string
+): string {
+  const header = `📢 **${payload.comment.user.login}** (via GitHub · ${payload.repository.full_name}#${payload.issue.number}):`;
+  return `${header}\n${truncate(update, 1800)}`;
 }
 
 function stateReasonSuffix(reason?: string | null): string {
