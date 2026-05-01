@@ -12,11 +12,27 @@ https://raw.githubusercontent.com/gezmodean-wow/scribe/main/docs/PLAYER_FACING_C
 
 Cog `CLAUDE.md` files track the most recent entry they've acknowledged. If the top entry below is newer than the cog's `Last acknowledged` code, the session must prefix its first response with `Standards updated:` plus a one-line summary of each new entry, then update the cog's acknowledged code.
 
+- **2026-04-30f** — Added "When to use which" section spelling out the trigger rule: shipping a fix requires `## Player summary` in the issue body even if the investigation already used `## Player update` comments. The two are not interchangeable — one is lifecycle communication, the other is release-notes copy.
 - **2026-04-30e** — Scribe repo is now public; canonical doc fetched via plain `WebFetch` against the raw URL above. Previous `gh api` instructions are no longer required (still works, just redundant).
 - **2026-04-30d** — `## Player update` now mirrors the **entire section** under the heading (not just the first paragraph), preserving markdown formatting — multi-step instructions, numbered lists, code blocks, and inline `### sub-headings` all reach the player intact. Section bound is the next h1 or h2 heading, so use h3+ for any structure inside the player-facing block. Long updates that exceed Discord's 2000-char per-message limit are auto-chunked into consecutive messages with a small `_(continued)_` marker on each continuation; nothing is truncated.
 - **2026-04-30c** — Bot/agent feedback path documented. When a bot or agent wants player input on a ticket, post a GitHub comment containing a `## Player update` heading; SCRIBE mirrors the section to the linked Discord thread (with the 📢 marker). Engineering context goes below a separator or a different heading and stays on GitHub. Two gotchas: (1) the comment author must not be a GitHub bot account — `gh` CLI through your PAT works because sender type is `User`, but a GitHub App account would be filtered. (2) Edits don't fire — only `action: created` is mirrored, so write the heading on first save.
 - **2026-04-30b** — Removed unsupported fenced ` ```release-notes ` closing-comment fallback. Player summaries must live in the issue body now; the comment fallback was advertised but never wired into SCRIBE's release draft or close announcement.
 - **2026-04-30a** — Initial: `## Player summary` (issue body) and `## Player update` (issue comments) headings introduced.
+
+## When to use which
+
+The two headings serve different purposes; both can apply to the same ticket.
+
+| Trigger | Heading | Where |
+|---|---|---|
+| You're shipping a change — committing a fix that references the issue | `## Player summary` | Issue body |
+| You're communicating live with the player during investigation — asking for info, posting status, requesting a debug dump | `## Player update` | Issue comment |
+
+**Player updates do not substitute for a Player summary, and vice versa.** A ticket whose investigation involves live Discord communication AND ends in a deployed fix needs both: Player updates throughout for the conversation, and a Player summary added to the body before (or as part of) the commit so the release-notes draft has something to quote.
+
+A ticket that is purely info-gathering — won't-fix, duplicate, feature spec, debug help — only needs Player updates as appropriate. No Player summary is required because no change is being shipped.
+
+If you commit `fix(<COG>-N): …` and issue N has no `## Player summary` in its body, the SCRIBE release draft will list it under `## ⚠️ No player summary written`. Add the summary to the body and run `/release-redraft` before approving.
 
 ## `## Player summary` — issue body
 
