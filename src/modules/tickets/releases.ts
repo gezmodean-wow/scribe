@@ -21,7 +21,7 @@ import {
 } from '../../core/db/schema.js';
 import { findCogByRepo, type CogChannel } from './channels.js';
 import type { TicketsModuleDeps } from './index.js';
-import { extractPlayerSummary } from './release-notes.js';
+import { extractPlayerSummary, extractPlayerUpdate } from './release-notes.js';
 
 export type ReleaseChannel = 'alpha' | 'beta' | 'release';
 
@@ -254,6 +254,10 @@ type ClosedIssue = {
   title: string;
   htmlUrl: string;
   summary: string | null;
+  // Only meaningful when summary is null — flips the warning-bucket bullet
+  // from "no player-facing copy at all" to "had Player updates but didn't
+  // promote a summary," which is almost always an oversight worth flagging.
+  hadPlayerUpdate: boolean;
 };
 
 // Issue references in commit messages — what actually shipped between two
@@ -302,11 +306,33 @@ async function collectShippedIssuesForRelease(
         issue_number: n,
       });
       if ('pull_request' in issue && issue.pull_request) continue;
+      const summary = extractPlayerSummary(issue.body);
+      let hadPlayerUpdate = false;
+      if (!summary) {
+        try {
+          const { data: comments } =
+            await deps.github.rest.issues.listComments({
+              owner,
+              repo,
+              issue_number: n,
+              per_page: 100,
+            });
+          hadPlayerUpdate = comments.some(
+            (c) => extractPlayerUpdate(c.body) !== null
+          );
+        } catch (err) {
+          deps.log.warn(
+            { err, issueNumber: n, repo: `${owner}/${repo}` },
+            'release: could not list comments for player-update check'
+          );
+        }
+      }
       collected.push({
         number: issue.number,
         title: issue.title,
         htmlUrl: issue.html_url,
-        summary: extractPlayerSummary(issue.body),
+        summary,
+        hadPlayerUpdate,
       });
     } catch (err) {
       const status = (err as { status?: number }).status;
@@ -413,7 +439,12 @@ export function composeDraft(input: {
       '_Add a `## Player summary` section to the issue body, then run `/release-redraft`._'
     );
     for (const issue of withoutSummary) {
-      lines.push(`- ${issue.title} · [#${issue.number}](${issue.htmlUrl})`);
+      const suffix = issue.hadPlayerUpdate
+        ? ' — had Player updates but no Player summary in body'
+        : '';
+      lines.push(
+        `- ${issue.title} · [#${issue.number}](${issue.htmlUrl})${suffix}`
+      );
     }
   }
 
