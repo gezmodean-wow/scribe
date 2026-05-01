@@ -61,7 +61,7 @@ async function onMessageCreate(
     await promoteMessage(message, link, 'auto', deps).catch((err) => {
       deps.log.warn(
         { err, messageId: message.id },
-        'transcript: auto-promote on attachment failed'
+        `transcript: auto-promote on attachment failed (${link.githubOwner}/${link.githubRepo}#${link.githubIssueNumber}, ${err?.status ?? 'no status'}): ${err?.message ?? String(err)}`
       );
     });
   }
@@ -102,7 +102,7 @@ async function onReactionAdd(
   await promoteMessage(message, link, fullUser.id, deps).catch((err) => {
     deps.log.warn(
       { err, messageId: message.id },
-      'transcript: manual promote via 🔁 failed'
+      `transcript: manual promote via 🔁 failed (${link.githubOwner}/${link.githubRepo}#${link.githubIssueNumber}, ${err?.status ?? 'no status'}): ${err?.message ?? String(err)}`
     );
   });
 }
