@@ -192,6 +192,10 @@ async function mirrorIssueCommentToDiscord(
   if (!found) return;
   const { thread } = found;
 
+  // Discord auto-unarchives a thread on send. If we found it archived (e.g.
+  // because the issue is already closed), restore that state after posting.
+  const wasArchived = thread.archived === true;
+
   const messages = formatGithubCommentForDiscord(payload, update);
   try {
     for (const content of messages) {
@@ -210,6 +214,15 @@ async function mirrorIssueCommentToDiscord(
       { err, threadId: thread.id },
       'could not send mirrored comment to thread'
     );
+  }
+
+  if (wasArchived) {
+    await thread.setArchived(true).catch((err) => {
+      deps.log.warn(
+        { err, threadId: thread.id },
+        'could not re-archive thread after mirroring comment'
+      );
+    });
   }
 }
 
