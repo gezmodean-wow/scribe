@@ -21,7 +21,11 @@ import {
 } from '../../core/db/schema.js';
 import { findCogByRepo, type CogChannel } from './channels.js';
 import type { TicketsModuleDeps } from './index.js';
-import { extractPlayerSummary, extractPlayerUpdate } from './release-notes.js';
+import {
+  extractPlayerSummary,
+  extractPlayerUpdate,
+  extractReleasesSection,
+} from './release-notes.js';
 
 export type ReleaseChannel = 'alpha' | 'beta' | 'release';
 
@@ -161,14 +165,22 @@ export async function draftAndPost(
     payload.release.prerelease
   );
 
-  const issues = await collectShippedIssuesForRelease(
-    payload.repository.owner.login,
-    payload.repository.name,
-    payload.release.tag_name,
-    cog.cogIdPrefix,
-    payload.release.published_at ?? payload.release.created_at,
-    deps
-  );
+  const [issues, releasesSection] = await Promise.all([
+    collectShippedIssuesForRelease(
+      payload.repository.owner.login,
+      payload.repository.name,
+      payload.release.tag_name,
+      cog.cogIdPrefix,
+      payload.release.published_at ?? payload.release.created_at,
+      deps
+    ),
+    fetchReleasesSection(
+      payload.repository.owner.login,
+      payload.repository.name,
+      payload.release.tag_name,
+      deps
+    ),
+  ]);
 
   const draft = composeDraft({
     repoName: payload.repository.name,
@@ -178,6 +190,7 @@ export async function draftAndPost(
     downloadLinks: buildDownloadLinks(cog, channelKind),
     channelKind,
     issues,
+    releasesSection,
   });
 
   const reviewChannelId = cog.releaseReviewChannelId!;
@@ -395,6 +408,54 @@ async function collectCommitsSincePriorRelease(
   return data;
 }
 
+// Fetches `RELEASES.md` at the tag's ref and extracts the section for this
+// tag. This is the canonical body source: each cog's `.pkgmeta` routes the
+// same file to CurseForge / Wago via `manual-changelog`, so what Discord
+// announces matches what the project pages publish.
+//
+// Returns null if the file is absent (cog hasn't adopted the dual-changelog
+// pattern yet — fall through to per-issue summary render) or if the file
+// exists but no matching section is found (likely an authoring slip; the
+// fallback render shows a warning prompting the dev to add the section).
+export async function fetchReleasesSection(
+  owner: string,
+  repo: string,
+  tag: string,
+  deps: TicketsModuleDeps
+): Promise<string | null> {
+  let raw: string;
+  try {
+    const { data } = await deps.github.rest.repos.getContent({
+      owner,
+      repo,
+      path: 'RELEASES.md',
+      ref: tag,
+    });
+    if (Array.isArray(data) || data.type !== 'file' || !('content' in data)) {
+      return null;
+    }
+    raw = Buffer.from(data.content, 'base64').toString('utf-8');
+  } catch (err) {
+    const status = (err as { status?: number }).status;
+    if (status !== 404) {
+      deps.log.warn(
+        { err, repo: `${owner}/${repo}`, tag },
+        'release: could not fetch RELEASES.md at tag'
+      );
+    }
+    return null;
+  }
+
+  const section = extractReleasesSection(raw, tag);
+  if (!section) {
+    deps.log.info(
+      { repo: `${owner}/${repo}`, tag },
+      'release: RELEASES.md exists but has no matching section for tag'
+    );
+  }
+  return section;
+}
+
 export function composeDraft(input: {
   repoName: string;
   tag: string;
@@ -403,8 +464,17 @@ export function composeDraft(input: {
   downloadLinks: string[];
   channelKind: ReleaseChannel;
   issues: ClosedIssue[];
+  releasesSection: string | null;
 }): string {
-  const { repoName, tag, releaseUrl, downloadLinks, channelKind, issues } = input;
+  const {
+    repoName,
+    tag,
+    releaseUrl,
+    downloadLinks,
+    channelKind,
+    issues,
+    releasesSection,
+  } = input;
   const badge = CHANNEL_BADGE[channelKind];
   const lines: string[] = [];
   lines.push(`**${repoName} ${tag}** · ${badge}`);
@@ -413,11 +483,37 @@ export function composeDraft(input: {
   );
   lines.push(linksLine);
   lines.push('');
-  lines.push("_Edit this draft to add theme headers and connective copy. Bullets below come from each issue's `## Player summary` section._");
+
+  if (releasesSection) {
+    lines.push(releasesSection);
+    // Trailing #N footer drives `fanOutThreadFollowups` (which scans the draft
+    // body for issue refs) since RELEASES.md prose is themed, not per-issue.
+    // Editors can remove individual numbers here to skip a thread followup.
+    if (issues.length > 0) {
+      lines.push('');
+      lines.push('---');
+      const refs = issues.map((i) => `#${i.number}`).join(' ');
+      lines.push(`_Issues shipped: ${refs}_`);
+    }
+    return lines.join('\n');
+  }
+
+  // Fallback path: RELEASES.md missing or no matching section. Surface a
+  // visible warning so the dev knows the canonical source needs updating,
+  // then render the per-issue summaries that drove drafts before this change.
+  lines.push(
+    "_⚠️ RELEASES.md section for this tag not found. Add a `## " +
+      tag +
+      "` (or `## " +
+      tag.replace(/-(?:alpha|beta|rc)\w*$/i, '') +
+      "`) section to the cog's RELEASES.md and run `/release-redraft`. Falling back to per-issue `## Player summary` bullets below._"
+  );
   lines.push('');
 
   if (issues.length === 0) {
-    lines.push('_(no issue references found in commits since the previous release)_');
+    lines.push(
+      '_(no issue references found in commits since the previous release)_'
+    );
     return lines.join('\n');
   }
 
@@ -889,14 +985,17 @@ export async function redraftRelease(
   }
 
   const channelKind = classifyReleaseChannel(release.tag_name, release.prerelease);
-  const issues = await collectShippedIssuesForRelease(
-    owner,
-    repo,
-    release.tag_name,
-    cog.cogIdPrefix,
-    release.published_at ?? release.created_at,
-    deps
-  );
+  const [issues, releasesSection] = await Promise.all([
+    collectShippedIssuesForRelease(
+      owner,
+      repo,
+      release.tag_name,
+      cog.cogIdPrefix,
+      release.published_at ?? release.created_at,
+      deps
+    ),
+    fetchReleasesSection(owner, repo, release.tag_name, deps),
+  ]);
   const draftBody = composeDraft({
     repoName: repo,
     tag: release.tag_name,
@@ -905,6 +1004,7 @@ export async function redraftRelease(
     downloadLinks: buildDownloadLinks(cog, channelKind),
     channelKind,
     issues,
+    releasesSection,
   });
 
   const existing = await findReleaseAnnouncement(deps, owner, repo, tag);

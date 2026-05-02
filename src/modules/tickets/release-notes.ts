@@ -52,3 +52,64 @@ function firstParagraph(s: string): string | null {
   const collapsed = paragraph.replace(/\s+/g, ' ').trim();
   return collapsed || null;
 }
+
+// Pulls the body of a tag's section out of a cog's `RELEASES.md`. The author
+// curates this file as player-facing prose; the bot uses the matching section
+// as the announce-channel draft body so what Discord shows matches what
+// CurseForge / Wago publish via the BigWigs packager's `manual-changelog`.
+//
+// Heading match order (first hit wins):
+//   1. Exact tag, e.g. `## v0.12.0-alpha9`
+//   2. Base version with the prerelease suffix stripped, e.g. `## v0.12.0`
+//      for tag `v0.12.0-alpha9`. This matches the common pattern of one
+//      "in-development" section maintained across an alpha series.
+//   3. `## Unreleased`, used in stub files until the dev moves the heading
+//      to a real version.
+//
+// Section bound: next h1 or h2 (so `### Subsection` inside the section is
+// preserved). Same trailing-content rule as the player-update extractor.
+export function extractReleasesSection(
+  body: string | null | undefined,
+  tag: string
+): string | null {
+  if (!body) return null;
+
+  const exact = matchVersionSection(body, tag);
+  if (exact) return exact;
+
+  const base = tag.replace(/-(?:alpha|beta|rc)\w*$/i, '');
+  if (base !== tag) {
+    const baseMatch = matchVersionSection(body, base);
+    if (baseMatch) return baseMatch;
+  }
+
+  return matchUnreleasedSection(body);
+}
+
+function matchVersionSection(body: string, version: string): string | null {
+  const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Match `## <version>` either alone on the line or followed by a non-version
+  // qualifier (e.g. `(in development)`). Same-line whitespace is restricted to
+  // space/tab — `\s` matches `\n`, which would let the optional tail consume
+  // the section's lead paragraph and break extraction. Boundary on the next
+  // char keeps `v0.12.0` from matching against `v0.12.0-alpha9`.
+  const headingRe = new RegExp(
+    `^##[ \\t]+${escaped}(?:[ \\t]+[^\\n]*)?[ \\t]*$`,
+    'im'
+  );
+  return matchSectionBody(body, headingRe);
+}
+
+function matchUnreleasedSection(body: string): string | null {
+  return matchSectionBody(body, /^##[ \t]+unreleased\b[^\n]*$/im);
+}
+
+function matchSectionBody(body: string, headingRe: RegExp): string | null {
+  const m = headingRe.exec(body);
+  if (!m) return null;
+  const after = body.slice(m.index + m[0].length);
+  const nextHeading = /\n#{1,2}\s+\S/.exec(after);
+  const section = nextHeading ? after.slice(0, nextHeading.index) : after;
+  const trimmed = section.replace(/^\s+|\s+$/g, '');
+  return trimmed || null;
+}
