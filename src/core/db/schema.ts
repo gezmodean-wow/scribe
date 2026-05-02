@@ -63,6 +63,7 @@ export const cogChannels = pgTable('cog_channels', {
     .$type<Record<string, string>>()
     .notNull()
     .default({}),
+  defaultTypeTagId: varchar('default_type_tag_id', { length: 32 }),
   releaseAnnounceChannelId: varchar('release_announce_channel_id', {
     length: 32,
   }),

@@ -140,6 +140,31 @@ export async function unsetStatusMapping(
   return row;
 }
 
+export async function setDefaultTypeTag(
+  db: Database,
+  discordChannelId: string,
+  tagId: string
+): Promise<CogChannel | undefined> {
+  const [row] = await db
+    .update(cogChannels)
+    .set({ defaultTypeTagId: tagId, updatedAt: new Date() })
+    .where(eq(cogChannels.discordChannelId, discordChannelId))
+    .returning();
+  return row;
+}
+
+export async function unsetDefaultTypeTag(
+  db: Database,
+  discordChannelId: string
+): Promise<CogChannel | undefined> {
+  const [row] = await db
+    .update(cogChannels)
+    .set({ defaultTypeTagId: null, updatedAt: new Date() })
+    .where(eq(cogChannels.discordChannelId, discordChannelId))
+    .returning();
+  return row;
+}
+
 export async function setReleaseConfig(
   db: Database,
   discordChannelId: string,

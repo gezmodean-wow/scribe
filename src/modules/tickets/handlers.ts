@@ -13,10 +13,12 @@ import {
   linkChannel,
   listChannels,
   replaceMappings,
+  setDefaultTypeTag,
   setReleaseConfig,
   setStatusMapping,
   setTagMapping,
   unlinkChannel,
+  unsetDefaultTypeTag,
   unsetStatusMapping,
   unsetTagMapping,
   type CogChannel,
@@ -538,6 +540,76 @@ export async function handleCogLabelUnset(
 
   await unsetStatusMapping(deps.db, channel.id, statusKey);
   await interaction.editReply(`Removed \`${labelName}\` mapping.`);
+}
+
+export async function handleCogDefaultTypeSet(
+  interaction: ChatInputCommandInteraction,
+  deps: TicketsModuleDeps
+) {
+  const channel = interaction.options.getChannel('channel', true);
+  const tagId = interaction.options.getString('tag', true);
+
+  if (channel.type !== ChannelType.GuildForum) {
+    await interaction.reply({
+      content: 'Pick a forum channel.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const cog = await findCogForChannel(deps.db, channel.id);
+  if (!cog) {
+    await interaction.editReply(
+      'This channel isn\'t linked to a cog repository. Run `/cog-link` first.'
+    );
+    return;
+  }
+
+  const forum = (await deps.discord.channels
+    .fetch(channel.id)
+    .catch(() => null)) as ForumChannel | null;
+  const tag = forum?.availableTags.find((t) => t.id === tagId);
+  if (!tag) {
+    await interaction.editReply('That tag isn\'t on this forum.');
+    return;
+  }
+
+  await setDefaultTypeTag(deps.db, channel.id, tagId);
+  await interaction.editReply(
+    `Default type tag for <#${channel.id}> → \`${tag.name}\`.`
+  );
+}
+
+export async function handleCogDefaultTypeUnset(
+  interaction: ChatInputCommandInteraction,
+  deps: TicketsModuleDeps
+) {
+  const channel = interaction.options.getChannel('channel', true);
+
+  if (channel.type !== ChannelType.GuildForum) {
+    await interaction.reply({
+      content: 'Pick a forum channel.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const cog = await findCogForChannel(deps.db, channel.id);
+  if (!cog) {
+    await interaction.editReply('This channel isn\'t linked.');
+    return;
+  }
+  if (!cog.defaultTypeTagId) {
+    await interaction.editReply('No default type tag is set.');
+    return;
+  }
+
+  await unsetDefaultTypeTag(deps.db, channel.id);
+  await interaction.editReply('Cleared default type tag.');
 }
 
 export async function handleCogCopyConfig(

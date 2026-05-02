@@ -12,6 +12,8 @@ import {
 import {
   handleCogBackfill,
   handleCogCopyConfig,
+  handleCogDefaultTypeSet,
+  handleCogDefaultTypeUnset,
   handleCogLabelSet,
   handleCogLabelUnset,
   handleCogLink,
@@ -59,6 +61,8 @@ const HANDLERS: Record<string, Handler> = {
   'cog-label-unset': handleCogLabelUnset,
   'cog-backfill': handleCogBackfill,
   'cog-import-issues': handleCogImportIssues,
+  'cog-default-type-set': handleCogDefaultTypeSet,
+  'cog-default-type-unset': handleCogDefaultTypeUnset,
   'cog-copy-config': handleCogCopyConfig,
   'cog-release-set': handleCogReleaseSet,
   'cog-release-clear': handleCogReleaseClear,
@@ -72,6 +76,7 @@ const AUTOCOMPLETE_COMMANDS = new Set([
   'cog-tag-unset',
   'cog-status-set',
   'cog-label-set',
+  'cog-default-type-set',
 ]);
 
 export function registerTicketsInteractions(deps: TicketsModuleDeps) {

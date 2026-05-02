@@ -354,6 +354,15 @@ async function importOneIssue(
     .map((name) => labelToTag.get(name))
     .filter((id): id is string => Boolean(id));
 
+  // Player posts get forced to pick a forum tag; programmatic creates don't.
+  // Fall back to the configured default so imported issues aren't tagless.
+  const typeTagIds =
+    labelTagIds.length > 0
+      ? labelTagIds
+      : cog.defaultTypeTagId
+      ? [cog.defaultTypeTagId]
+      : [];
+
   const statusKey = resolveStatusKey(
     {
       state: issue.state,
@@ -365,7 +374,7 @@ async function importOneIssue(
   const statusTagId = cog.statusTagMap[statusKey];
 
   const appliedTags = [
-    ...new Set([...labelTagIds, ...(statusTagId ? [statusTagId] : [])]),
+    ...new Set([...typeTagIds, ...(statusTagId ? [statusTagId] : [])]),
   ].slice(0, DISCORD_MAX_APPLIED_TAGS);
 
   const name = truncate(

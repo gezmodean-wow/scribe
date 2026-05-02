@@ -242,6 +242,41 @@ export const ticketsCommands: RESTPostAPIApplicationCommandsJSONBody[] = [
     .toJSON(),
 
   new SlashCommandBuilder()
+    .setName('cog-default-type-set')
+    .setDescription(
+      'Set the forum tag applied to imported issues that have no mappable label.'
+    )
+    .setDMPermission(false)
+    .addChannelOption((o) =>
+      o
+        .setName('channel')
+        .setDescription('Forum channel')
+        .addChannelTypes(ChannelType.GuildForum)
+        .setRequired(true)
+    )
+    .addStringOption((o) =>
+      o
+        .setName('tag')
+        .setDescription('Forum tag to apply as the default type')
+        .setAutocomplete(true)
+        .setRequired(true)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('cog-default-type-unset')
+    .setDescription('Clear the default type tag for imported issues.')
+    .setDMPermission(false)
+    .addChannelOption((o) =>
+      o
+        .setName('channel')
+        .setDescription('Forum channel')
+        .addChannelTypes(ChannelType.GuildForum)
+        .setRequired(true)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
     .setName('cog-copy-config')
     .setDescription(
       'Copy tag/label/status mappings from one linked forum to another (matched by tag name).'

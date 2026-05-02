@@ -1,0 +1,1 @@
+ALTER TABLE "cog_channels" ADD COLUMN "default_type_tag_id" varchar(32);
