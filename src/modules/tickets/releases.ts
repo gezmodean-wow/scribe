@@ -1,5 +1,6 @@
 import {
   ActionRowBuilder,
+  AttachmentBuilder,
   type ButtonInteraction,
   ButtonBuilder,
   ButtonStyle,
@@ -22,6 +23,7 @@ import {
 import { findCogByRepo, type CogChannel } from './channels.js';
 import type { TicketsModuleDeps } from './index.js';
 import {
+  chunkBody,
   extractPlayerSummary,
   extractPlayerUpdate,
   extractReleasesSection,
@@ -237,14 +239,21 @@ export async function draftAndPost(
     return null;
   }
 
-  const message = await reviewChannel.send({
-    embeds: [buildReviewEmbed(row)],
-    components: [buildReviewButtons(row.id)],
-  });
+  const file = buildNotesFile(row);
+  const chain = await sendChain(
+    reviewChannel,
+    buildReviewEmbedChain(row),
+    [buildReviewButtons(row)],
+    file ? [file] : []
+  );
 
   const [updated] = await deps.db
     .update(releaseAnnouncements)
-    .set({ reviewMessageId: message.id, updatedAt: new Date() })
+    .set({
+      reviewMessageId: chain.anchorId,
+      reviewContinuationMessageIds: chain.continuationIds,
+      updatedAt: new Date(),
+    })
     .where(eq(releaseAnnouncements.id, row.id))
     .returning();
 
@@ -253,7 +262,8 @@ export async function draftAndPost(
       repo: payload.repository.full_name,
       tag: payload.release.tag_name,
       channel: channelKind,
-      reviewMessageId: message.id,
+      reviewMessageId: chain.anchorId,
+      continuationCount: chain.continuationIds.length,
       issueCount: issues.length,
     },
     'release draft posted for review'
@@ -547,40 +557,93 @@ export function composeDraft(input: {
   return lines.join('\n');
 }
 
-export function buildReviewEmbed(row: ReleaseAnnouncement): EmbedBuilder {
+// Discord per-embed description limit is 4096; we chunk well under to leave
+// margin for occasional multi-byte content.
+const EMBED_CHUNK_CHARS = 4000;
+
+// Cap how many sequential messages we'll post for one release. Beyond this
+// the inline view truncates and players read the full notes from the .md
+// attachment on the anchor message. Keeps runaway release notes from
+// blowing up the announce channel.
+const MAX_MESSAGES_PER_RELEASE = 8;
+
+// Discord modal text-input hard cap. If draftBody exceeds this, the Edit
+// button is disabled — the modal would silently drop everything past 4000
+// on save. The dev should edit RELEASES.md and run /release-redraft instead.
+const MODAL_INPUT_LIMIT = 4000;
+
+function bodyChunksFor(body: string): string[] {
+  const chunks = chunkBody(body, EMBED_CHUNK_CHARS);
+  if (chunks.length <= MAX_MESSAGES_PER_RELEASE) return chunks;
+  const kept = chunks.slice(0, MAX_MESSAGES_PER_RELEASE - 1);
+  const lastBudget = EMBED_CHUNK_CHARS - 80;
+  const lastIdx = MAX_MESSAGES_PER_RELEASE - 1;
+  kept.push(
+    chunks[lastIdx]!.slice(0, lastBudget) +
+      '\n\n_… truncated; see attached file for full notes._'
+  );
+  return kept;
+}
+
+// Returns null when the body fits in a single embed — no need to attach.
+function buildNotesFile(row: ReleaseAnnouncement): AttachmentBuilder | null {
+  if (row.draftBody.length <= EMBED_CHUNK_CHARS) return null;
+  const safeRepo = row.githubRepo.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const safeTag = row.tag.replace(/[^a-zA-Z0-9._-]/g, '_');
+  return new AttachmentBuilder(Buffer.from(row.draftBody, 'utf-8'), {
+    name: `${safeRepo}-${safeTag}.md`,
+  });
+}
+
+function reviewStatusLabel(status: string): string {
+  if (status === 'published') return '✅ Published';
+  if (status === 'discarded') return '🗑 Discarded';
+  return '📝 Pending review';
+}
+
+// Builds the per-message embeds for the review channel. Anchor (index 0)
+// carries title + URL; continuations are color-only with a part-N/M footer
+// for orientation. The last embed's footer also surfaces the status/id.
+export function buildReviewEmbedChain(row: ReleaseAnnouncement): EmbedBuilder[] {
   const channelKind = row.channel as ReleaseChannel;
   const color = CHANNEL_COLOR[channelKind] ?? 0x95a5a6;
-  const description = clamp(row.draftBody, 4000);
-  const statusLabel =
-    row.status === 'published'
-      ? '✅ Published'
-      : row.status === 'discarded'
-        ? '🗑 Discarded'
-        : '📝 Pending review';
-  return new EmbedBuilder()
-    .setTitle(`${row.githubRepo} ${row.tag}`)
-    .setURL(row.releaseUrl)
-    .setDescription(description)
-    .setColor(color)
-    .setFooter({
-      text: `${statusLabel} · channel: ${channelKind} · id ${row.id}`,
-    });
+  const chunks = bodyChunksFor(row.draftBody);
+  const total = chunks.length;
+  const statusLabel = reviewStatusLabel(row.status);
+
+  return chunks.map((chunk, i) => {
+    const embed = new EmbedBuilder().setColor(color).setDescription(chunk);
+    if (i === 0) {
+      embed.setTitle(`${row.githubRepo} ${row.tag}`).setURL(row.releaseUrl);
+    }
+    if (i === total - 1) {
+      const partSuffix = total > 1 ? ` · part ${i + 1}/${total}` : '';
+      embed.setFooter({
+        text: `${statusLabel} · channel: ${channelKind} · id ${row.id}${partSuffix}`,
+      });
+    } else {
+      embed.setFooter({ text: `part ${i + 1}/${total}` });
+    }
+    return embed;
+  });
 }
 
 export function buildReviewButtons(
-  rowId: number
+  row: ReleaseAnnouncement
 ): ActionRowBuilder<ButtonBuilder> {
+  const editDisabled = row.draftBody.length > MODAL_INPUT_LIMIT;
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(`release-approve:${rowId}`)
+      .setCustomId(`release-approve:${row.id}`)
       .setLabel('Approve & publish')
       .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
-      .setCustomId(`release-edit:${rowId}`)
-      .setLabel('Edit')
-      .setStyle(ButtonStyle.Primary),
+      .setCustomId(`release-edit:${row.id}`)
+      .setLabel(editDisabled ? 'Edit (too long — use RELEASES.md)' : 'Edit')
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(editDisabled),
     new ButtonBuilder()
-      .setCustomId(`release-discard:${rowId}`)
+      .setCustomId(`release-discard:${row.id}`)
       .setLabel('Discard')
       .setStyle(ButtonStyle.Danger)
   );
@@ -602,8 +665,69 @@ export async function fetchTextChannel(
   return channel as TextChannel;
 }
 
-function clamp(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max - 1) + '…' : s;
+type ChainIds = { anchorId: string; continuationIds: string[] };
+
+// Posts a release chain: anchor message (carries title, buttons, and the
+// full-notes attachment when chunked) followed by one continuation message
+// per remaining body chunk.
+async function sendChain(
+  channel: TextChannel,
+  embeds: EmbedBuilder[],
+  components: ActionRowBuilder<ButtonBuilder>[],
+  files: AttachmentBuilder[]
+): Promise<ChainIds> {
+  const anchor = await channel.send({
+    embeds: [embeds[0]!],
+    components,
+    files,
+  });
+  const continuationIds: string[] = [];
+  for (let i = 1; i < embeds.length; i++) {
+    const msg = await channel.send({ embeds: [embeds[i]!] });
+    continuationIds.push(msg.id);
+  }
+  return { anchorId: anchor.id, continuationIds };
+}
+
+// Edits the anchor in place and replaces all continuations: chunk count may
+// have changed since the original send. Stale continuation ids that no
+// longer exist (manual deletions) are logged and skipped.
+async function editChain(
+  channel: TextChannel,
+  anchorId: string,
+  oldContinuationIds: string[],
+  embeds: EmbedBuilder[],
+  components: ActionRowBuilder<ButtonBuilder>[],
+  files: AttachmentBuilder[],
+  deps: TicketsModuleDeps
+): Promise<ChainIds | null> {
+  const anchor = await channel.messages.fetch(anchorId).catch(() => null);
+  if (!anchor) return null;
+
+  await anchor.edit({
+    embeds: [embeds[0]!],
+    components,
+    files,
+    attachments: [],
+  });
+
+  for (const id of oldContinuationIds) {
+    const msg = await channel.messages.fetch(id).catch(() => null);
+    if (!msg) continue;
+    await msg.delete().catch((err) =>
+      deps.log.warn(
+        { err, messageId: id },
+        'release: could not delete stale continuation message'
+      )
+    );
+  }
+
+  const continuationIds: string[] = [];
+  for (let i = 1; i < embeds.length; i++) {
+    const msg = await channel.send({ embeds: [embeds[i]!] });
+    continuationIds.push(msg.id);
+  }
+  return { anchorId, continuationIds };
 }
 
 export async function findReleaseAnnouncement(
@@ -713,6 +837,16 @@ async function openEditModal(
   interaction: ButtonInteraction,
   row: ReleaseAnnouncement
 ): Promise<void> {
+  // Defense in depth: the button is also disabled in buildReviewButtons when
+  // the body exceeds the modal limit. If somehow we still got here, refuse
+  // rather than silently truncate on save.
+  if (row.draftBody.length > MODAL_INPUT_LIMIT) {
+    await interaction.reply({
+      content: `Body is ${row.draftBody.length} chars; Discord modals cap at ${MODAL_INPUT_LIMIT}. Edit RELEASES.md and run \`/release-redraft\` instead.`,
+      ephemeral: true,
+    });
+    return;
+  }
   const modal = new ModalBuilder()
     .setCustomId(`${EDIT_MODAL_PREFIX}${row.id}`)
     .setTitle(`Edit ${row.githubRepo} ${row.tag}`.slice(0, 45));
@@ -720,8 +854,8 @@ async function openEditModal(
     .setCustomId('body')
     .setLabel('Announcement body (markdown)')
     .setStyle(TextInputStyle.Paragraph)
-    .setValue(row.draftBody.slice(0, 4000))
-    .setMaxLength(4000)
+    .setValue(row.draftBody)
+    .setMaxLength(MODAL_INPUT_LIMIT)
     .setRequired(true);
   modal.addComponents(
     new ActionRowBuilder<ModalActionRowComponentBuilder>().addComponents(input)
@@ -793,16 +927,21 @@ async function approveAndPublish(
     return;
   }
 
-  const message = await announceChannel.send({
-    embeds: [buildAnnounceEmbed(row)],
-  });
+  const file = buildNotesFile(row);
+  const chain = await sendChain(
+    announceChannel,
+    buildAnnounceEmbedChain(row),
+    [],
+    file ? [file] : []
+  );
 
   const [updated] = await deps.db
     .update(releaseAnnouncements)
     .set({
       status: 'published',
       announceChannelId,
-      announceMessageId: message.id,
+      announceMessageId: chain.anchorId,
+      announceContinuationMessageIds: chain.continuationIds,
       publishedAt: new Date(),
       updatedAt: new Date(),
     })
@@ -837,15 +976,28 @@ async function approveAndPublish(
   );
 }
 
-export function buildAnnounceEmbed(row: ReleaseAnnouncement): EmbedBuilder {
+export function buildAnnounceEmbedChain(
+  row: ReleaseAnnouncement
+): EmbedBuilder[] {
   const channelKind = row.channel as ReleaseChannel;
   const color = CHANNEL_COLOR[channelKind] ?? 0x95a5a6;
-  return new EmbedBuilder()
-    .setTitle(`${row.githubRepo} ${row.tag}`)
-    .setURL(row.releaseUrl)
-    .setDescription(clamp(row.draftBody, 4000))
-    .setColor(color)
-    .setFooter({ text: `${CHANNEL_BADGE[channelKind] ?? 'Release'}` });
+  const chunks = bodyChunksFor(row.draftBody);
+  const total = chunks.length;
+  const badge = CHANNEL_BADGE[channelKind] ?? 'Release';
+
+  return chunks.map((chunk, i) => {
+    const embed = new EmbedBuilder().setColor(color).setDescription(chunk);
+    if (i === 0) {
+      embed.setTitle(`${row.githubRepo} ${row.tag}`).setURL(row.releaseUrl);
+    }
+    if (i === total - 1) {
+      const partSuffix = total > 1 ? ` · part ${i + 1}/${total}` : '';
+      embed.setFooter({ text: `${badge}${partSuffix}` });
+    } else {
+      embed.setFooter({ text: `part ${i + 1}/${total}` });
+    }
+    return embed;
+  });
 }
 
 async function rerenderReviewMessage(
@@ -856,20 +1008,34 @@ async function rerenderReviewMessage(
   if (!row.reviewChannelId || !row.reviewMessageId) return;
   const channel = await fetchTextChannel(discord, row.reviewChannelId, deps);
   if (!channel) return;
-  const msg = await channel.messages
-    .fetch(row.reviewMessageId)
-    .catch(() => null);
-  if (!msg) return;
   const components =
-    row.status === 'pending' ? [buildReviewButtons(row.id)] : [];
-  await msg
-    .edit({
-      embeds: [buildReviewEmbed(row)],
-      components,
-    })
-    .catch((err) =>
-      deps.log.warn({ err, rowId: row.id }, 'could not re-render review message')
-    );
+    row.status === 'pending' ? [buildReviewButtons(row)] : [];
+  const file = buildNotesFile(row);
+  const chain = await editChain(
+    channel,
+    row.reviewMessageId,
+    row.reviewContinuationMessageIds,
+    buildReviewEmbedChain(row),
+    components,
+    file ? [file] : [],
+    deps
+  ).catch((err) => {
+    deps.log.warn({ err, rowId: row.id }, 'could not re-render review message');
+    return null;
+  });
+  if (!chain) return;
+  if (
+    chain.continuationIds.join(',') !==
+    row.reviewContinuationMessageIds.join(',')
+  ) {
+    await deps.db
+      .update(releaseAnnouncements)
+      .set({
+        reviewContinuationMessageIds: chain.continuationIds,
+        updatedAt: new Date(),
+      })
+      .where(eq(releaseAnnouncements.id, row.id));
+  }
 }
 
 type FanoutResult = { posted: number; skipped: number };
@@ -1039,6 +1205,8 @@ export async function redraftRelease(
           draftBody,
           announceChannelId: cog.releaseAnnounceChannelId ?? null,
           announceMessageId: null,
+          announceContinuationMessageIds: [],
+          reviewContinuationMessageIds: [],
           publishedAt: null,
           updatedAt: new Date(),
         })
@@ -1065,15 +1233,19 @@ export async function redraftRelease(
       row = inserted!;
     }
 
-    const message = await reviewChannel.send({
-      embeds: [buildReviewEmbed(row)],
-      components: [buildReviewButtons(row.id)],
-    });
+    const file = buildNotesFile(row);
+    const chain = await sendChain(
+      reviewChannel,
+      buildReviewEmbedChain(row),
+      [buildReviewButtons(row)],
+      file ? [file] : []
+    );
     const [withMsg] = await deps.db
       .update(releaseAnnouncements)
       .set({
         reviewChannelId: reviewChannel.id,
-        reviewMessageId: message.id,
+        reviewMessageId: chain.anchorId,
+        reviewContinuationMessageIds: chain.continuationIds,
         updatedAt: new Date(),
       })
       .where(eq(releaseAnnouncements.id, row.id))
@@ -1119,15 +1291,28 @@ export async function redraftRelease(
   }
 
   if (repost) {
-    const repostBody = `**Updated notes for ${row.tag}:**`;
-    const message = await announceChannel.send({
-      content: repostBody,
-      embeds: [buildAnnounceEmbed(row)],
+    // Send the anchor with a "(updated)" lead so readers can tell it's a
+    // re-post rather than a duplicate. Old chain (anchor + any continuations)
+    // is left in the channel intentionally — same as the pre-multi-message
+    // behavior, where the prior announce was untouched.
+    const embeds = buildAnnounceEmbedChain(row);
+    embeds[0]!.setTitle(`${row.githubRepo} ${row.tag} (updated)`);
+    const file = buildNotesFile(row);
+    const anchor = await announceChannel.send({
+      content: `**Updated notes for ${row.tag}:**`,
+      embeds: [embeds[0]!],
+      files: file ? [file] : [],
     });
+    const continuationIds: string[] = [];
+    for (let i = 1; i < embeds.length; i++) {
+      const msg = await announceChannel.send({ embeds: [embeds[i]!] });
+      continuationIds.push(msg.id);
+    }
     const [final] = await deps.db
       .update(releaseAnnouncements)
       .set({
-        announceMessageId: message.id,
+        announceMessageId: anchor.id,
+        announceContinuationMessageIds: continuationIds,
         updatedAt: new Date(),
       })
       .where(eq(releaseAnnouncements.id, row.id))
@@ -1151,17 +1336,35 @@ export async function redraftRelease(
         'Original announce message id missing — pass `repost: true` to send a fresh message.',
     };
   }
-  const original = await announceChannel.messages
-    .fetch(row.announceMessageId)
-    .catch(() => null);
-  if (!original) {
+  const file = buildNotesFile(row);
+  const editResult = await editChain(
+    announceChannel,
+    row.announceMessageId,
+    row.announceContinuationMessageIds,
+    buildAnnounceEmbedChain(row),
+    [],
+    file ? [file] : [],
+    deps
+  );
+  if (!editResult) {
     return {
       kind: 'error',
       message:
         'Original announce message not found — pass `repost: true` to send a fresh message.',
     };
   }
-  await original.edit({ embeds: [buildAnnounceEmbed(row)] });
+  if (
+    editResult.continuationIds.join(',') !==
+    row.announceContinuationMessageIds.join(',')
+  ) {
+    await deps.db
+      .update(releaseAnnouncements)
+      .set({
+        announceContinuationMessageIds: editResult.continuationIds,
+        updatedAt: new Date(),
+      })
+      .where(eq(releaseAnnouncements.id, row.id));
+  }
   await rerenderReviewMessage(discord, row, deps);
   return { kind: 'announce-edited', row };
 }

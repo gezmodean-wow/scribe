@@ -113,3 +113,25 @@ function matchSectionBody(body: string, headingRe: RegExp): string | null {
   const trimmed = section.replace(/^\s+|\s+$/g, '');
   return trimmed || null;
 }
+
+// Splits a markdown body into chunks no larger than `maxChars`, preferring
+// paragraph boundaries (blank line), falling back to line boundaries, and
+// finally to a hard cut. The "boundary too far back" guard prevents tiny
+// trailing chunks when a single paragraph happens to land just over the
+// limit — better to split mid-paragraph than to emit a 100-char tail.
+export function chunkBody(text: string, maxChars: number): string[] {
+  if (text.length <= maxChars) return [text];
+  const minCut = Math.floor(maxChars / 2);
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > maxChars) {
+    const head = remaining.slice(0, maxChars);
+    let cut = head.lastIndexOf('\n\n');
+    if (cut < minCut) cut = head.lastIndexOf('\n');
+    if (cut < minCut) cut = maxChars;
+    chunks.push(remaining.slice(0, cut).replace(/\s+$/, ''));
+    remaining = remaining.slice(cut).replace(/^\s+/, '');
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}

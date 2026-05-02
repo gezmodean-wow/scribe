@@ -94,8 +94,18 @@ export const releaseAnnouncements = pgTable(
     status: varchar('status', { length: 16 }).notNull().default('pending'),
     reviewChannelId: varchar('review_channel_id', { length: 32 }),
     reviewMessageId: varchar('review_message_id', { length: 32 }),
+    // Continuation messages posted after the anchor when draft_body exceeds
+    // one embed's worth of text. Empty for short releases.
+    reviewContinuationMessageIds: jsonb('review_continuation_message_ids')
+      .$type<string[]>()
+      .notNull()
+      .default([]),
     announceChannelId: varchar('announce_channel_id', { length: 32 }),
     announceMessageId: varchar('announce_message_id', { length: 32 }),
+    announceContinuationMessageIds: jsonb('announce_continuation_message_ids')
+      .$type<string[]>()
+      .notNull()
+      .default([]),
     draftBody: text('draft_body').notNull(),
     publishedAt: timestamp('published_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true })

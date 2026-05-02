@@ -1,0 +1,2 @@
+ALTER TABLE "release_announcements" ADD COLUMN "review_continuation_message_ids" jsonb DEFAULT '[]'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "release_announcements" ADD COLUMN "announce_continuation_message_ids" jsonb DEFAULT '[]'::jsonb NOT NULL;
