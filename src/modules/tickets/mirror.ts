@@ -4,8 +4,16 @@ import { threadIssueMap } from '../../core/db/schema.js';
 import { findCogForChannel, type CogChannel } from './channels.js';
 import type { TicketsModuleDeps } from './index.js';
 import { extractPlayerSummary, extractPlayerUpdate } from './release-notes.js';
+import {
+  handleBranchCreate,
+  handleBranchDelete,
+} from './branch-webhooks.js';
 import { handleReleaseEvent } from './releases.js';
-import { applyStatusTag, resolveStatusKey } from './status.js';
+import {
+  applyStatusTag,
+  isThreadInProtectedStatus,
+  resolveStatusKey,
+} from './status.js';
 
 // Discord CDN URLs are signed with `ex=` epoch and expire; inlining preserves the evidence.
 const TEXT_INLINE_CAP_BYTES = 64 * 1024;
@@ -161,6 +169,20 @@ export async function handleGithubMirror(
   if (event === 'release') {
     await handleReleaseEvent(
       payload as Parameters<typeof handleReleaseEvent>[0],
+      deps
+    );
+    return;
+  }
+  if (event === 'create') {
+    await handleBranchCreate(
+      payload as Parameters<typeof handleBranchCreate>[0],
+      deps
+    );
+    return;
+  }
+  if (event === 'delete') {
+    await handleBranchDelete(
+      payload as Parameters<typeof handleBranchDelete>[0],
       deps
     );
     return;
@@ -370,6 +392,18 @@ async function handleIssueLabelChange(
     },
     cog.statusTagMap
   );
+
+  // Don't let an unrelated label edit drag a thread back from in_progress
+  // or released to Triaged. An explicit label-based status (label:*) IS
+  // an admin signal and is allowed through.
+  if (statusKey === 'open' && isThreadInProtectedStatus(thread, cog)) {
+    deps.log.debug(
+      { threadId: thread.id, action: payload.action },
+      'label-change: thread is in protected status, not downgrading'
+    );
+    return;
+  }
+
   await applyStatusTag(thread, cog, statusKey).catch((err) => {
     deps.log.warn(
       { err, threadId: thread.id, statusKey, action: payload.action },

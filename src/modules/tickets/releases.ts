@@ -28,6 +28,7 @@ import {
   extractPlayerUpdate,
   extractReleasesSection,
 } from './release-notes.js';
+import { applyStatusTag } from './status.js';
 
 export type ReleaseChannel = 'alpha' | 'beta' | 'release';
 
@@ -1087,6 +1088,31 @@ async function fanOutThreadFollowups(
         );
       }
     );
+
+    // Flip the thread's status to "released" (Shipped). Skip if the thread
+    // currently carries Won't Fix / Duplicate — those are explicit admin
+    // closure signals we don't want to overwrite even if the commit log
+    // happens to reference the issue. Verification → Shipped and
+    // Triaged/In Progress → Shipped are both fine.
+    const closedAdminTagIds = (['closed:not_planned', 'closed:duplicate'] as const)
+      .map((k) => cog.statusTagMap[k])
+      .filter((id): id is string => Boolean(id));
+    const isAdminClosed = thread.appliedTags.some((id) =>
+      closedAdminTagIds.includes(id)
+    );
+    if (isAdminClosed) {
+      deps.log.debug(
+        { threadId: thread.id, issue: number },
+        'release: thread carries won\'t-fix/duplicate, not flipping to released'
+      );
+    } else {
+      await applyStatusTag(thread, cog, 'released').catch((err) => {
+        deps.log.warn(
+          { err, threadId: thread.id, issue: number },
+          'release: could not apply released tag'
+        );
+      });
+    }
   }
   return { posted, skipped };
 }

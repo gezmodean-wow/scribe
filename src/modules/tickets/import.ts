@@ -15,6 +15,7 @@ import { findCogForChannel, type CogChannel } from './channels.js';
 import type { TicketsModuleDeps } from './index.js';
 import { extractPlayerSummary } from './release-notes.js';
 import { resolveStatusKey } from './status.js';
+import { postTicketActionsMessage } from './ticket-actions.js';
 
 const SELECT_ID_PREFIX = 'import-issues:select:';
 const CONFIRM_ID_PREFIX = 'import-issues:confirm:';
@@ -397,6 +398,11 @@ async function importOneIssue(
     githubIssueNumber: issue.number,
     githubIssueNodeId: issue.node_id,
   });
+
+  // Post the admin action row before archiving (closed issues archive
+  // immediately below). Discord auto-unarchives on send anyway, but
+  // posting first keeps the order visible: stub → controls → archive.
+  await postTicketActionsMessage(created);
 
   if (issue.state === 'closed') {
     await created.setArchived(true).catch((err) => {

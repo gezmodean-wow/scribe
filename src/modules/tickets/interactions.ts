@@ -27,6 +27,7 @@ import {
   handleCogTagList,
   handleCogTagSet,
   handleCogTagUnset,
+  handleCogTicketControlsRebuild,
   handleCogUnlink,
   handleReleaseRedraft,
   handleTagAutocomplete,
@@ -38,6 +39,10 @@ import {
   handleImportSelect,
   isImportComponentId,
 } from './import.js';
+import {
+  handleTicketActionButton,
+  isTicketActionId,
+} from './ticket-actions.js';
 import { handleTranscriptCommand } from './transcript.js';
 import type { TicketsModuleDeps } from './index.js';
 
@@ -60,6 +65,7 @@ const HANDLERS: Record<string, Handler> = {
   'cog-label-set': handleCogLabelSet,
   'cog-label-unset': handleCogLabelUnset,
   'cog-backfill': handleCogBackfill,
+  'cog-ticket-controls-rebuild': handleCogTicketControlsRebuild,
   'cog-import-issues': handleCogImportIssues,
   'cog-default-type-set': handleCogDefaultTypeSet,
   'cog-default-type-unset': handleCogDefaultTypeUnset,
@@ -86,6 +92,35 @@ export function registerTicketsInteractions(deps: TicketsModuleDeps) {
         await handleTagAutocomplete(interaction, deps).catch((err) =>
           deps.log.warn({ err }, 'autocomplete failed')
         );
+      }
+      return;
+    }
+
+    if (interaction.isButton() && isTicketActionId(interaction.customId)) {
+      if (
+        !isAuthorized(interaction.member, deps.config.discord.staffRoleIds)
+      ) {
+        await interaction.reply({
+          content: "You don't have permission to use this control.",
+          ephemeral: true,
+        });
+        return;
+      }
+      try {
+        await handleTicketActionButton(interaction, deps);
+      } catch (err) {
+        deps.log.error(
+          { err, customId: interaction.customId },
+          'ticket-action button handler failed'
+        );
+        const msg = 'Something went wrong. Check the logs.';
+        if (interaction.replied || interaction.deferred) {
+          await interaction.editReply(msg).catch(() => {});
+        } else {
+          await interaction
+            .reply({ content: msg, ephemeral: true })
+            .catch(() => {});
+        }
       }
       return;
     }
