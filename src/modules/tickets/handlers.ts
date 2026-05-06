@@ -129,7 +129,7 @@ export async function handleTrack(
     );
   });
 
-  await postTicketActionsMessage(thread);
+  await postTicketActionsMessage(thread, log);
 
   await interaction.editReply(
     `Tracked as **${cog.githubOwner}/${cog.githubRepo}#${issue.number}**\n${issue.html_url}`
@@ -930,7 +930,7 @@ export async function handleCogTicketControlsRebuild(
         skipped++;
         continue;
       }
-      const msg = await postTicketActionsMessage(thread);
+      const msg = await postTicketActionsMessage(thread, deps.log);
       if (msg) {
         posted++;
       } else {
