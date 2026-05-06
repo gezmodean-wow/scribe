@@ -142,9 +142,11 @@ export const ticketsCommands: RESTPostAPIApplicationCommandsJSONBody[] = [
         .setRequired(true)
         .addChoices(
           { name: 'Open (default / triaged)', value: 'open' },
-          { name: 'Closed — Completed', value: 'closed:completed' },
-          { name: 'Closed — Not planned', value: 'closed:not_planned' },
-          { name: 'Closed — Duplicate', value: 'closed:duplicate' }
+          { name: 'In progress (branch open)', value: 'in_progress' },
+          { name: 'Closed — Completed (verification)', value: 'closed:completed' },
+          { name: 'Closed — Not planned (won\'t fix)', value: 'closed:not_planned' },
+          { name: 'Closed — Duplicate', value: 'closed:duplicate' },
+          { name: 'Released (shipped in published release)', value: 'released' }
         )
     )
     .addStringOption((o) =>
@@ -174,9 +176,11 @@ export const ticketsCommands: RESTPostAPIApplicationCommandsJSONBody[] = [
         .setRequired(true)
         .addChoices(
           { name: 'Open (default / triaged)', value: 'open' },
-          { name: 'Closed — Completed', value: 'closed:completed' },
-          { name: 'Closed — Not planned', value: 'closed:not_planned' },
-          { name: 'Closed — Duplicate', value: 'closed:duplicate' }
+          { name: 'In progress (branch open)', value: 'in_progress' },
+          { name: 'Closed — Completed (verification)', value: 'closed:completed' },
+          { name: 'Closed — Not planned (won\'t fix)', value: 'closed:not_planned' },
+          { name: 'Closed — Duplicate', value: 'closed:duplicate' },
+          { name: 'Released (shipped in published release)', value: 'released' }
         )
     )
     .toJSON(),
@@ -302,6 +306,21 @@ export const ticketsCommands: RESTPostAPIApplicationCommandsJSONBody[] = [
     .setName('cog-backfill')
     .setDescription(
       'Back-fill thread→issue mappings from thread names matching [PREFIX-N].'
+    )
+    .setDMPermission(false)
+    .addChannelOption((o) =>
+      o
+        .setName('channel')
+        .setDescription('Forum channel to scan')
+        .addChannelTypes(ChannelType.GuildForum)
+        .setRequired(true)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('cog-ticket-controls-rebuild')
+    .setDescription(
+      'Post the admin Ticket Actions button row to any linked threads that don\'t have one.'
     )
     .setDMPermission(false)
     .addChannelOption((o) =>

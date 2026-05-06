@@ -31,6 +31,10 @@ import {
   STATUS_KEYS,
   type StatusKey,
 } from './status.js';
+import {
+  postTicketActionsMessage,
+  threadHasTicketActions,
+} from './ticket-actions.js';
 
 export async function handleTrack(
   interaction: ChatInputCommandInteraction,
@@ -124,6 +128,8 @@ export async function handleTrack(
       'could not apply initial status tag'
     );
   });
+
+  await postTicketActionsMessage(thread);
 
   await interaction.editReply(
     `Tracked as **${cog.githubOwner}/${cog.githubRepo}#${issue.number}**\n${issue.html_url}`
@@ -429,12 +435,17 @@ export async function handleCogStatusList(
   }
 
   const stateKeys = STATUS_KEYS.filter((key) => key in cog.statusTagMap);
+  const unmappedStateKeys = STATUS_KEYS.filter(
+    (key) => !(key in cog.statusTagMap)
+  );
   const labelKeys = Object.keys(cog.statusTagMap).filter((k) =>
     k.startsWith('label:')
   );
 
   if (stateKeys.length === 0 && labelKeys.length === 0) {
-    await interaction.editReply('No status mappings yet.');
+    await interaction.editReply(
+      'No status mappings yet. Use `/cog-status-set` to start mapping.'
+    );
     return;
   }
 
@@ -460,6 +471,12 @@ export async function handleCogStatusList(
     sections.push(
       '**Label mappings** (priority over state):\n' +
         labelKeys.map(renderLine).join('\n')
+    );
+  }
+  if (unmappedStateKeys.length > 0) {
+    sections.push(
+      '**Unmapped state keys:**\n' +
+        unmappedStateKeys.map((k) => `  • \`${k}\``).join('\n')
     );
   }
 
@@ -854,6 +871,98 @@ export async function handleCogBackfill(
       errors,
     },
     'cog-backfill complete'
+  );
+}
+
+export async function handleCogTicketControlsRebuild(
+  interaction: ChatInputCommandInteraction,
+  deps: TicketsModuleDeps
+) {
+  const channel = interaction.options.getChannel('channel', true);
+  if (channel.type !== ChannelType.GuildForum) {
+    await interaction.reply({
+      content: 'Pick a forum channel.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const cog = await findCogForChannel(deps.db, channel.id);
+  if (!cog) {
+    await interaction.editReply(
+      'This channel isn\'t linked to a cog repository. Run `/cog-link` first.'
+    );
+    return;
+  }
+
+  const forum = (await deps.discord.channels
+    .fetch(channel.id)
+    .catch(() => null)) as ForumChannel | null;
+  if (!forum) {
+    await interaction.editReply('Could not fetch the forum channel.');
+    return;
+  }
+
+  const threads = await fetchAllForumThreads(forum);
+
+  let posted = 0;
+  let skipped = 0;
+  let errors = 0;
+
+  for (const thread of threads) {
+    // Only post to threads we know are linked to GitHub issues — random
+    // threads in the forum without a mapping shouldn't get an admin row.
+    const [link] = await deps.db
+      .select()
+      .from(threadIssueMap)
+      .where(eq(threadIssueMap.discordThreadId, thread.id))
+      .limit(1);
+    if (!link) {
+      skipped++;
+      continue;
+    }
+
+    try {
+      const has = await threadHasTicketActions(thread);
+      if (has) {
+        skipped++;
+        continue;
+      }
+      const msg = await postTicketActionsMessage(thread);
+      if (msg) {
+        posted++;
+      } else {
+        errors++;
+      }
+    } catch (err) {
+      errors++;
+      deps.log.warn(
+        { err, threadId: thread.id },
+        'cog-ticket-controls-rebuild: failed on thread'
+      );
+    }
+  }
+
+  const lines = [
+    `Ticket controls rebuild for <#${channel.id}>:`,
+    `• ${posted} thread(s) received a fresh control row`,
+    `• ${skipped} skipped (already had a row, or not linked)`,
+  ];
+  if (errors > 0) lines.push(`• ${errors} error(s) — check logs`);
+  await interaction.editReply(lines.join('\n'));
+
+  deps.log.info(
+    {
+      channelId: channel.id,
+      cog: `${cog.githubOwner}/${cog.githubRepo}`,
+      total: threads.length,
+      posted,
+      skipped,
+      errors,
+    },
+    'cog-ticket-controls-rebuild complete'
   );
 }
 

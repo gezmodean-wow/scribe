@@ -3,9 +3,11 @@ import type { CogChannel } from './channels.js';
 
 export const STATUS_KEYS = [
   'open',
+  'in_progress',
   'closed:completed',
   'closed:not_planned',
   'closed:duplicate',
+  'released',
 ] as const;
 
 export type StateStatusKey = (typeof STATUS_KEYS)[number];
@@ -59,4 +61,24 @@ export async function applyStatusTag(
   if (unchanged) return;
 
   await thread.setAppliedTags(next.slice(0, DISCORD_MAX_APPLIED_TAGS));
+}
+
+// Forward-state guard: once a thread reaches in_progress or released we
+// don't want a stray label-change webhook to drag it back to Triaged.
+// Issue open/close/reopen events bypass this guard intentionally — those
+// are authoritative GitHub state transitions, label edits are not.
+const PROTECTED_STATUS_KEYS: readonly StateStatusKey[] = [
+  'in_progress',
+  'released',
+];
+
+export function isThreadInProtectedStatus(
+  thread: ThreadChannel,
+  cog: CogChannel
+): boolean {
+  const protectedTagIds = PROTECTED_STATUS_KEYS.map(
+    (k) => cog.statusTagMap[k]
+  ).filter((id): id is string => Boolean(id));
+  if (protectedTagIds.length === 0) return false;
+  return thread.appliedTags.some((id) => protectedTagIds.includes(id));
 }
