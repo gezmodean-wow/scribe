@@ -49,14 +49,21 @@ export function buildTicketActionsRow(): ActionRowBuilder<ButtonBuilder> {
 }
 
 export async function postTicketActionsMessage(
-  thread: ThreadChannel
+  thread: ThreadChannel,
+  log: TicketsModuleDeps['log']
 ): Promise<Message | null> {
   return thread
     .send({
       content: CONTROL_MESSAGE_HEADER,
       components: [buildTicketActionsRow()],
     })
-    .catch(() => null);
+    .catch((err) => {
+      log.warn(
+        { err, threadId: thread.id, threadName: thread.name },
+        'could not post ticket-actions row to thread'
+      );
+      return null;
+    });
 }
 
 // Returns true when the thread already has a ticket-actions message.

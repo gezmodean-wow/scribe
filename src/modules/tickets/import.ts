@@ -402,7 +402,7 @@ async function importOneIssue(
   // Post the admin action row before archiving (closed issues archive
   // immediately below). Discord auto-unarchives on send anyway, but
   // posting first keeps the order visible: stub → controls → archive.
-  await postTicketActionsMessage(created);
+  await postTicketActionsMessage(created, deps.log);
 
   if (issue.state === 'closed') {
     await created.setArchived(true).catch((err) => {
