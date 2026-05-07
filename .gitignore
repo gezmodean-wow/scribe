@@ -8,3 +8,11 @@ dist/
 Thumbs.db
 .vscode/
 .idea/
+
+# Claude Code per-user settings (settings.json is project-shared; *.local.json is user-local)
+.claude/settings.local.json
+
+# Local database dumps — never commit prod data
+*.sql
+!drizzle/**/*.sql
+

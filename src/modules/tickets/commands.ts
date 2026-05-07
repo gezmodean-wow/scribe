@@ -318,6 +318,21 @@ export const ticketsCommands: RESTPostAPIApplicationCommandsJSONBody[] = [
     .toJSON(),
 
   new SlashCommandBuilder()
+    .setName('cog-backfill-default-type')
+    .setDescription(
+      'Apply the configured default type tag to any threads that have no intake tag.'
+    )
+    .setDMPermission(false)
+    .addChannelOption((o) =>
+      o
+        .setName('channel')
+        .setDescription('Forum channel to scan')
+        .addChannelTypes(ChannelType.GuildForum)
+        .setRequired(true)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
     .setName('cog-ticket-controls-rebuild')
     .setDescription(
       'Post the admin Ticket Actions button row to any linked threads that don\'t have one.'

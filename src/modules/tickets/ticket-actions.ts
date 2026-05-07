@@ -8,6 +8,8 @@ import {
 } from 'discord.js';
 import { eq } from 'drizzle-orm';
 import { threadIssueMap } from '../../core/db/schema.js';
+import { findCogForChannel, type CogChannel } from './channels.js';
+import { applyStatusTag, resolveStatusKey } from './status.js';
 import type { TicketsModuleDeps } from './index.js';
 
 const ACTION_PREFIX = 'ticket-action:';
@@ -155,14 +157,20 @@ async function closeIssue(
 ): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
-  let currentState: string;
+  const thread = interaction.channel as ThreadChannel;
+
+  let issueData: {
+    state: string;
+    state_reason?: string | null;
+    labels?: Array<string | { name?: string | null }>;
+  };
   try {
     const { data } = await deps.github.rest.issues.get({
       owner: link.githubOwner,
       repo: link.githubRepo,
       issue_number: link.githubIssueNumber,
     });
-    currentState = data.state;
+    issueData = data;
   } catch (err) {
     deps.log.warn(
       { err, issue: `${link.githubOwner}/${link.githubRepo}#${link.githubIssueNumber}` },
@@ -174,9 +182,12 @@ async function closeIssue(
     return;
   }
 
-  if (currentState === 'closed') {
+  if (issueData.state === 'closed') {
+    const synced = await syncClosedThreadState(thread, link, issueData, deps);
     await interaction.editReply(
-      `Issue **${link.githubOwner}/${link.githubRepo}#${link.githubIssueNumber}** is already closed.`
+      synced
+        ? `Issue **${link.githubOwner}/${link.githubRepo}#${link.githubIssueNumber}** was already closed on GitHub — synced thread (status tag + archive).`
+        : `Issue **${link.githubOwner}/${link.githubRepo}#${link.githubIssueNumber}** is already closed.`
     );
     return;
   }
@@ -239,14 +250,20 @@ async function reopenIssue(
 ): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
-  let currentState: string;
+  const thread = interaction.channel as ThreadChannel;
+
+  let issueData: {
+    state: string;
+    state_reason?: string | null;
+    labels?: Array<string | { name?: string | null }>;
+  };
   try {
     const { data } = await deps.github.rest.issues.get({
       owner: link.githubOwner,
       repo: link.githubRepo,
       issue_number: link.githubIssueNumber,
     });
-    currentState = data.state;
+    issueData = data;
   } catch (err) {
     deps.log.warn(
       { err, issue: `${link.githubOwner}/${link.githubRepo}#${link.githubIssueNumber}` },
@@ -258,9 +275,12 @@ async function reopenIssue(
     return;
   }
 
-  if (currentState === 'open') {
+  if (issueData.state === 'open') {
+    const synced = await syncOpenThreadState(thread, link, issueData, deps);
     await interaction.editReply(
-      `Issue **${link.githubOwner}/${link.githubRepo}#${link.githubIssueNumber}** is already open.`
+      synced
+        ? `Issue **${link.githubOwner}/${link.githubRepo}#${link.githubIssueNumber}** was already open on GitHub — synced thread (unarchived + status tag).`
+        : `Issue **${link.githubOwner}/${link.githubRepo}#${link.githubIssueNumber}** is already open.`
     );
     return;
   }
@@ -293,4 +313,150 @@ async function reopenIssue(
     },
     'ticket-action: reopened via admin button'
   );
+}
+
+// When an admin clicks Close on an issue that's already closed on GitHub
+// (e.g. closed via release-publish, closed directly on GitHub, or original
+// `issues.closed` webhook missed), the Discord thread can be stranded with
+// stale state. Re-derive the correct status tag from current issue data and
+// archive — but skip the close announcement to avoid duplicating one that
+// might already be in the thread from the original close.
+async function syncClosedThreadState(
+  thread: ThreadChannel,
+  link: { githubOwner: string; githubRepo: string; githubIssueNumber: number },
+  issue: {
+    state: string;
+    state_reason?: string | null;
+    labels?: Array<string | { name?: string | null }>;
+  },
+  deps: TicketsModuleDeps
+): Promise<boolean> {
+  const cog = await findCogForChannel(deps.db, thread.parentId ?? '');
+  if (!cog) return false;
+
+  const labels = normalizeLabels(issue.labels);
+  const statusKey = resolveStatusKey(
+    {
+      state: 'closed',
+      state_reason: issue.state_reason ?? null,
+      labels,
+    },
+    cog.statusTagMap
+  );
+
+  let tagApplied = false;
+  try {
+    await applyStatusTag(thread, cog, statusKey);
+    tagApplied = true;
+  } catch (err) {
+    deps.log.warn(
+      { err, threadId: thread.id, statusKey },
+      'sync-closed: could not apply status tag'
+    );
+  }
+
+  let archived = false;
+  if (!thread.archived) {
+    try {
+      await thread.setArchived(true);
+      archived = true;
+    } catch (err) {
+      deps.log.warn(
+        { err, threadId: thread.id },
+        'sync-closed: could not archive thread'
+      );
+    }
+  } else {
+    archived = true;
+  }
+
+  const synced = tagApplied || archived;
+  if (synced) {
+    deps.log.info(
+      {
+        issue: `${link.githubOwner}/${link.githubRepo}#${link.githubIssueNumber}`,
+        threadId: thread.id,
+        statusKey,
+      },
+      'ticket-action: synced thread state for already-closed issue'
+    );
+  }
+  return synced;
+}
+
+// Symmetric to syncClosedThreadState — used when admin clicks Reopen on an
+// issue that's already open on GitHub (e.g. reopened directly on GitHub and
+// the webhook was missed). Unarchive + re-derive status tag.
+async function syncOpenThreadState(
+  thread: ThreadChannel,
+  link: { githubOwner: string; githubRepo: string; githubIssueNumber: number },
+  issue: {
+    state: string;
+    state_reason?: string | null;
+    labels?: Array<string | { name?: string | null }>;
+  },
+  deps: TicketsModuleDeps
+): Promise<boolean> {
+  const cog = await findCogForChannel(deps.db, thread.parentId ?? '');
+  if (!cog) return false;
+
+  const labels = normalizeLabels(issue.labels);
+  const statusKey = resolveStatusKey(
+    { state: 'open', state_reason: null, labels },
+    cog.statusTagMap
+  );
+
+  let unarchived = false;
+  if (thread.archived) {
+    try {
+      await thread.setArchived(false);
+      unarchived = true;
+    } catch (err) {
+      deps.log.warn(
+        { err, threadId: thread.id },
+        'sync-open: could not unarchive thread'
+      );
+    }
+  }
+
+  let tagApplied = false;
+  try {
+    await applyStatusTag(thread, cog, statusKey);
+    tagApplied = true;
+  } catch (err) {
+    deps.log.warn(
+      { err, threadId: thread.id, statusKey },
+      'sync-open: could not apply status tag'
+    );
+  }
+
+  const synced = unarchived || tagApplied;
+  if (synced) {
+    deps.log.info(
+      {
+        issue: `${link.githubOwner}/${link.githubRepo}#${link.githubIssueNumber}`,
+        threadId: thread.id,
+        statusKey,
+      },
+      'ticket-action: synced thread state for already-open issue'
+    );
+  }
+  return synced;
+}
+
+// REST issues.get returns labels as either string names or objects with
+// `name`. resolveStatusKey expects the object form.
+function normalizeLabels(
+  raw: Array<string | { name?: string | null }> | undefined
+): Array<{ name: string }> {
+  if (!raw) return [];
+  const out: Array<{ name: string }> = [];
+  for (const l of raw) {
+    if (typeof l === 'string') {
+      out.push({ name: l });
+    } else if (l?.name) {
+      out.push({ name: l.name });
+    }
+  }
+  return out;
 }
