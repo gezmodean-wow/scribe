@@ -11,6 +11,7 @@ import {
 } from './releases.js';
 import {
   handleCogBackfill,
+  handleCogBackfillDefaultType,
   handleCogCopyConfig,
   handleCogDefaultTypeSet,
   handleCogDefaultTypeUnset,
@@ -65,6 +66,7 @@ const HANDLERS: Record<string, Handler> = {
   'cog-label-set': handleCogLabelSet,
   'cog-label-unset': handleCogLabelUnset,
   'cog-backfill': handleCogBackfill,
+  'cog-backfill-default-type': handleCogBackfillDefaultType,
   'cog-ticket-controls-rebuild': handleCogTicketControlsRebuild,
   'cog-import-issues': handleCogImportIssues,
   'cog-default-type-set': handleCogDefaultTypeSet,

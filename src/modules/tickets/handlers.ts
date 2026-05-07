@@ -874,6 +874,136 @@ export async function handleCogBackfill(
   );
 }
 
+export async function handleCogBackfillDefaultType(
+  interaction: ChatInputCommandInteraction,
+  deps: TicketsModuleDeps
+) {
+  const channel = interaction.options.getChannel('channel', true);
+  if (channel.type !== ChannelType.GuildForum) {
+    await interaction.reply({
+      content: 'Pick a forum channel.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const cog = await findCogForChannel(deps.db, channel.id);
+  if (!cog) {
+    await interaction.editReply(
+      'This channel isn\'t linked to a cog repository. Run `/cog-link` first.'
+    );
+    return;
+  }
+  if (!cog.defaultTypeTagId) {
+    await interaction.editReply(
+      'No default type tag is set for this channel. Use `/cog-default-type-set` first.'
+    );
+    return;
+  }
+
+  const forum = (await deps.discord.channels
+    .fetch(channel.id)
+    .catch(() => null)) as ForumChannel | null;
+  if (!forum) {
+    await interaction.editReply('Could not fetch the forum channel.');
+    return;
+  }
+
+  // A thread is "uncategorized" when none of its applied tags is a non-status
+  // tag. Status tags are SCRIBE-managed (open/triaged/in_progress/closed:*),
+  // so the test filters those out and asks: does anything else remain?
+  const statusTagIds = new Set(Object.values(cog.statusTagMap));
+  const defaultTagId = cog.defaultTypeTagId;
+  // Verify the default tag still exists on the forum — Discord lets admins
+  // delete tags out from under us, leaving stale ids in the cog config.
+  const defaultExists = forum.availableTags.some((t) => t.id === defaultTagId);
+  if (!defaultExists) {
+    await interaction.editReply(
+      'The configured default type tag no longer exists on this forum. Re-run `/cog-default-type-set` with a current tag.'
+    );
+    return;
+  }
+
+  const threads = await fetchAllForumThreads(forum);
+
+  const DISCORD_MAX_APPLIED_TAGS = 5;
+  let applied = 0;
+  let alreadyTyped = 0;
+  let alreadyHasDefault = 0;
+  let atTagCap = 0;
+  let errors = 0;
+
+  for (const thread of threads) {
+    const current = thread.appliedTags;
+    const nonStatus = current.filter((id) => !statusTagIds.has(id));
+    if (nonStatus.length > 0) {
+      if (nonStatus.includes(defaultTagId)) alreadyHasDefault++;
+      else alreadyTyped++;
+      continue;
+    }
+    if (current.length >= DISCORD_MAX_APPLIED_TAGS) {
+      atTagCap++;
+      continue;
+    }
+
+    // Some threads are archived; setAppliedTags auto-unarchives. Re-archive
+    // afterwards so we don't drag stale closed threads back into the active
+    // list as a side effect of a tag fix-up.
+    const wasArchived = thread.archived === true;
+    try {
+      await thread.setAppliedTags(
+        [...current, defaultTagId].slice(0, DISCORD_MAX_APPLIED_TAGS)
+      );
+      applied++;
+      if (wasArchived) {
+        await thread.setArchived(true).catch((err) => {
+          deps.log.warn(
+            { err, threadId: thread.id },
+            'cog-backfill-default-type: could not re-archive after tag apply'
+          );
+        });
+      }
+    } catch (err) {
+      errors++;
+      deps.log.warn(
+        { err, threadId: thread.id },
+        'cog-backfill-default-type: failed on thread'
+      );
+    }
+  }
+
+  const defaultName =
+    forum.availableTags.find((t) => t.id === defaultTagId)?.name ??
+    `tag ${defaultTagId}`;
+  const lines = [
+    `Default-type backfill for <#${channel.id}> (default: \`${defaultName}\`):`,
+    `• ${applied} thread(s) tagged`,
+    `• ${alreadyTyped} already had a non-status tag (skipped)`,
+    `• ${alreadyHasDefault} already had the default applied (skipped)`,
+  ];
+  if (atTagCap > 0) {
+    lines.push(`• ${atTagCap} skipped — already at Discord's 5-tag cap`);
+  }
+  if (errors > 0) lines.push(`• ${errors} error(s) — check logs`);
+  await interaction.editReply(lines.join('\n'));
+
+  deps.log.info(
+    {
+      channelId: channel.id,
+      cog: `${cog.githubOwner}/${cog.githubRepo}`,
+      total: threads.length,
+      applied,
+      alreadyTyped,
+      alreadyHasDefault,
+      atTagCap,
+      errors,
+    },
+    'cog-backfill-default-type complete'
+  );
+}
+
 export async function handleCogTicketControlsRebuild(
   interaction: ChatInputCommandInteraction,
   deps: TicketsModuleDeps
