@@ -27,6 +27,9 @@ import {
   extractPlayerSummary,
   extractPlayerUpdate,
   extractReleasesSection,
+  isPrereleaseTag,
+  parseReleaseTag,
+  sameMajorMinor,
 } from './release-notes.js';
 import { applyStatusTag } from './status.js';
 
@@ -168,32 +171,41 @@ export async function draftAndPost(
     payload.release.prerelease
   );
 
+  const owner = payload.repository.owner.login;
+  const repo = payload.repository.name;
+  const thisTag = payload.release.tag_name;
+
+  const priorReleases = await listPriorReleases(
+    owner,
+    repo,
+    payload.release.published_at ?? payload.release.created_at,
+    deps
+  );
+  const renderModeDecision = decideRenderMode(thisTag, priorReleases);
+
   const [issues, releasesSection] = await Promise.all([
     collectShippedIssuesForRelease(
-      payload.repository.owner.login,
-      payload.repository.name,
-      payload.release.tag_name,
+      owner,
+      repo,
+      thisTag,
       cog.cogIdPrefix,
-      payload.release.published_at ?? payload.release.created_at,
+      priorReleases,
       deps
     ),
-    fetchReleasesSection(
-      payload.repository.owner.login,
-      payload.repository.name,
-      payload.release.tag_name,
-      deps
-    ),
+    fetchReleasesSection(owner, repo, thisTag, deps),
   ]);
 
   const draft = composeDraft({
     repoName: payload.repository.name,
-    tag: payload.release.tag_name,
-    title: payload.release.name ?? payload.release.tag_name,
+    tag: thisTag,
+    title: payload.release.name ?? thisTag,
     releaseUrl: payload.release.html_url,
     downloadLinks: buildDownloadLinks(cog, channelKind),
     channelKind,
     issues,
     releasesSection,
+    renderMode: renderModeDecision.mode,
+    priorTag: renderModeDecision.priorTag,
   });
 
   const reviewChannelId = cog.releaseReviewChannelId!;
@@ -292,14 +304,14 @@ async function collectShippedIssuesForRelease(
   repo: string,
   thisTag: string,
   cogIdPrefix: string,
-  releasePublishedAt: string,
+  priorReleases: PriorRelease[],
   deps: TicketsModuleDeps
 ): Promise<ClosedIssue[]> {
   const commits = await collectCommitsSincePriorRelease(
     owner,
     repo,
     thisTag,
-    releasePublishedAt,
+    priorReleases,
     deps
   );
 
@@ -374,25 +386,51 @@ async function collectShippedIssuesForRelease(
 
 type CommitInfo = { commit: { message: string } };
 
-async function collectCommitsSincePriorRelease(
+// Trimmed shape of a release row from listReleases — just what the diff and
+// chain-detection paths need. Pulled into a type alias so call sites can
+// share the fetch and pass the same array to multiple consumers.
+export type PriorRelease = {
+  tag_name: string;
+  published_at: string;
+  prerelease: boolean;
+};
+
+export async function listPriorReleases(
   owner: string,
   repo: string,
-  thisTag: string,
-  releasePublishedAt: string,
+  thisPublishedAt: string,
   deps: TicketsModuleDeps
-): Promise<CommitInfo[]> {
-  const releaseDate = new Date(releasePublishedAt);
+): Promise<PriorRelease[]> {
+  const cutoff = new Date(thisPublishedAt).getTime();
   const releases = await deps.github.paginate(
     deps.github.rest.repos.listReleases,
     { owner, repo, per_page: 50 }
   );
-  const prior = releases
-    .filter((r) => r.published_at && new Date(r.published_at) < releaseDate)
+  return releases
+    .filter(
+      (r): r is typeof r & { published_at: string } =>
+        Boolean(r.published_at) && new Date(r.published_at!).getTime() < cutoff
+    )
     .sort(
       (a, b) =>
-        new Date(b.published_at!).getTime() -
-        new Date(a.published_at!).getTime()
-    )[0];
+        new Date(b.published_at).getTime() -
+        new Date(a.published_at).getTime()
+    )
+    .map((r) => ({
+      tag_name: r.tag_name,
+      published_at: r.published_at,
+      prerelease: r.prerelease,
+    }));
+}
+
+async function collectCommitsSincePriorRelease(
+  owner: string,
+  repo: string,
+  thisTag: string,
+  priorReleases: PriorRelease[],
+  deps: TicketsModuleDeps
+): Promise<CommitInfo[]> {
+  const prior = priorReleases[0];
 
   if (prior?.tag_name) {
     // GitHub's compare endpoint caps the inline `commits` array at 250. For
@@ -417,6 +455,43 @@ async function collectCommitsSincePriorRelease(
     per_page: 100,
   });
   return data;
+}
+
+// Decides whether a release renders full notes or a delta-only "Changes
+// since X" block.
+//
+// Full when the release is the first of its kind (stable or prerelease) on
+// its `MAJOR.MINOR` line — first stable on the line, or the line's first
+// prerelease. The intent is: minor/major bumps and the first prerelease of
+// a new line both deserve the full player-facing prose; patches and
+// subsequent prereleases just want the delta.
+//
+// Falls back to 'full' when thisTag isn't parseable, so an oddly-shaped tag
+// behaves like the historical (always-full) path rather than rendering an
+// empty delta.
+//
+// `priorTag` for delta is the immediately-previous release on the repo
+// (priorReleases[0]), which matches how the issue diff is computed — so the
+// "Changes since X" header lines up with the issue list under it.
+export type RenderMode = 'full' | 'delta';
+
+export function decideRenderMode(
+  thisTag: string,
+  priorReleases: PriorRelease[]
+): { mode: RenderMode; priorTag: string | null } {
+  const parsed = parseReleaseTag(thisTag);
+  if (!parsed) return { mode: 'full', priorTag: null };
+
+  const isPre = isPrereleaseTag(parsed);
+  const sameLineSameKind = priorReleases.find((r) => {
+    const p = parseReleaseTag(r.tag_name);
+    if (!p) return false;
+    if (!sameMajorMinor(parsed, p)) return false;
+    return isPrereleaseTag(p) === isPre;
+  });
+  if (!sameLineSameKind) return { mode: 'full', priorTag: null };
+
+  return { mode: 'delta', priorTag: priorReleases[0]?.tag_name ?? null };
 }
 
 // Fetches `RELEASES.md` at the tag's ref and extracts the section for this
@@ -476,6 +551,8 @@ export function composeDraft(input: {
   channelKind: ReleaseChannel;
   issues: ClosedIssue[];
   releasesSection: string | null;
+  renderMode: RenderMode;
+  priorTag: string | null;
 }): string {
   const {
     repoName,
@@ -485,6 +562,8 @@ export function composeDraft(input: {
     channelKind,
     issues,
     releasesSection,
+    renderMode,
+    priorTag,
   } = input;
   const badge = CHANNEL_BADGE[channelKind];
   const lines: string[] = [];
@@ -494,6 +573,14 @@ export function composeDraft(input: {
   );
   lines.push(linksLine);
   lines.push('');
+
+  // Delta render — used for patches and subsequent prereleases on the same
+  // major.minor line. Skip the long RELEASES.md prose (the player saw it on
+  // the line's first release) and emit only the per-issue bullets so this
+  // post reads like a patch note.
+  if (renderMode === 'delta') {
+    return renderDeltaDraft(lines, issues, priorTag).join('\n');
+  }
 
   if (releasesSection) {
     lines.push(releasesSection);
@@ -556,6 +643,41 @@ export function composeDraft(input: {
   }
 
   return lines.join('\n');
+}
+
+function renderDeltaDraft(
+  lines: string[],
+  issues: ClosedIssue[],
+  priorTag: string | null
+): string[] {
+  lines.push(priorTag ? `## Changes since ${priorTag}` : '## Changes');
+
+  if (issues.length === 0) {
+    lines.push('');
+    lines.push(
+      '_(no issue references found in commits since the previous release)_'
+    );
+    return lines;
+  }
+
+  // For delta we don't split missing-summary into a warning bucket — the
+  // first-in-line release already prompted the dev to fix that. Render
+  // missing-summary as a title-only bullet so the player still sees the
+  // change, with a quiet inline note for the dev.
+  for (const issue of issues) {
+    if (issue.summary) {
+      lines.push(`- ${issue.summary} · [#${issue.number}](${issue.htmlUrl})`);
+    } else {
+      const suffix = issue.hadPlayerUpdate
+        ? ' — _no Player summary written; had Player updates_'
+        : ' — _no Player summary written_';
+      lines.push(
+        `- ${issue.title} · [#${issue.number}](${issue.htmlUrl})${suffix}`
+      );
+    }
+  }
+
+  return lines;
 }
 
 // Discord per-embed description limit is 4096; we chunk well under to leave
@@ -1177,13 +1299,20 @@ export async function redraftRelease(
   }
 
   const channelKind = classifyReleaseChannel(release.tag_name, release.prerelease);
+  const priorReleases = await listPriorReleases(
+    owner,
+    repo,
+    release.published_at ?? release.created_at,
+    deps
+  );
+  const renderModeDecision = decideRenderMode(release.tag_name, priorReleases);
   const [issues, releasesSection] = await Promise.all([
     collectShippedIssuesForRelease(
       owner,
       repo,
       release.tag_name,
       cog.cogIdPrefix,
-      release.published_at ?? release.created_at,
+      priorReleases,
       deps
     ),
     fetchReleasesSection(owner, repo, release.tag_name, deps),
@@ -1197,6 +1326,8 @@ export async function redraftRelease(
     channelKind,
     issues,
     releasesSection,
+    renderMode: renderModeDecision.mode,
+    priorTag: renderModeDecision.priorTag,
   });
 
   const existing = await findReleaseAnnouncement(deps, owner, repo, tag);
