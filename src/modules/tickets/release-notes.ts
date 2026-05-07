@@ -114,6 +114,38 @@ function matchSectionBody(body: string, headingRe: RegExp): string | null {
   return trimmed || null;
 }
 
+// Parses a release tag into semver-ish parts. Accepts an optional `v` prefix
+// and an optional `-prerelease` suffix (alpha/beta/rc/anything). Returns null
+// if the tag doesn't follow `MAJOR.MINOR(.PATCH)?(-PRE)?` so callers can fall
+// back to "render full notes" rather than guessing the chain.
+export type ParsedTag = {
+  major: number;
+  minor: number;
+  patch: number;
+  prerelease: string | null;
+};
+
+const TAG_RE = /^v?(\d+)\.(\d+)(?:\.(\d+))?(?:-(.+))?$/;
+
+export function parseReleaseTag(tag: string): ParsedTag | null {
+  const m = TAG_RE.exec(tag.trim());
+  if (!m) return null;
+  return {
+    major: Number.parseInt(m[1]!, 10),
+    minor: Number.parseInt(m[2]!, 10),
+    patch: m[3] ? Number.parseInt(m[3]!, 10) : 0,
+    prerelease: m[4] ?? null,
+  };
+}
+
+export function isPrereleaseTag(parsed: ParsedTag): boolean {
+  return parsed.prerelease !== null && parsed.prerelease.length > 0;
+}
+
+export function sameMajorMinor(a: ParsedTag, b: ParsedTag): boolean {
+  return a.major === b.major && a.minor === b.minor;
+}
+
 // Splits a markdown body into chunks no larger than `maxChars`, preferring
 // paragraph boundaries (blank line), falling back to line boundaries, and
 // finally to a hard cut. The "boundary too far back" guard prevents tiny
