@@ -948,16 +948,27 @@ export async function handleCogBackfillDefaultType(
       continue;
     }
 
-    // Some threads are archived; setAppliedTags auto-unarchives. Re-archive
-    // afterwards so we don't drag stale closed threads back into the active
-    // list as a side effect of a tag fix-up.
+    // Discord rejects setAppliedTags on archived threads with 50083 ("Thread
+    // is archived"), so explicitly unarchive first. Re-archive afterwards
+    // (including on failure) so we don't drag stale closed threads back into
+    // the active list as a side effect of a tag fix-up.
     const wasArchived = thread.archived === true;
     try {
+      if (wasArchived) {
+        await thread.setArchived(false);
+      }
       await thread.setAppliedTags(
         [...current, defaultTagId].slice(0, DISCORD_MAX_APPLIED_TAGS)
       );
       applied++;
-      if (wasArchived) {
+    } catch (err) {
+      errors++;
+      deps.log.warn(
+        { err, threadId: thread.id },
+        'cog-backfill-default-type: failed on thread'
+      );
+    } finally {
+      if (wasArchived && !thread.archived) {
         await thread.setArchived(true).catch((err) => {
           deps.log.warn(
             { err, threadId: thread.id },
@@ -965,12 +976,6 @@ export async function handleCogBackfillDefaultType(
           );
         });
       }
-    } catch (err) {
-      errors++;
-      deps.log.warn(
-        { err, threadId: thread.id },
-        'cog-backfill-default-type: failed on thread'
-      );
     }
   }
 
