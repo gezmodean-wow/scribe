@@ -14,6 +14,7 @@ import {
   isThreadInProtectedStatus,
   resolveStatusKey,
 } from './status.js';
+import { dispatchRoadmapEvent } from '../roadmap/index.js';
 
 // Discord CDN URLs are signed with `ex=` epoch and expire; inlining preserves the evidence.
 const TEXT_INLINE_CAP_BYTES = 64 * 1024;
@@ -164,6 +165,16 @@ export async function handleGithubMirror(
     else if (p.action === 'labeled' || p.action === 'unlabeled') {
       await handleIssueLabelChange(p, deps);
     }
+    // Roadmap broadcast (issue #10) reacts to a different slice of `issues`
+    // actions (milestoned/demilestoned/opened/closed/reopened). Isolated so a
+    // roadmap-render failure can't break thread mirroring.
+    await dispatchRoadmapEvent('issues', payload, deps).catch((err) =>
+      deps.log.error({ err, event }, 'roadmap dispatch failed')
+    );
+    return;
+  }
+  if (event === 'milestone') {
+    await dispatchRoadmapEvent('milestone', payload, deps);
     return;
   }
   if (event === 'release') {
@@ -412,7 +423,7 @@ async function handleIssueLabelChange(
   });
 }
 
-async function findThreadAndCog(
+export async function findThreadAndCog(
   payload: {
     issue: { number: number };
     repository: { name: string; owner: { login: string } };

@@ -1,5 +1,7 @@
+import { sql } from 'drizzle-orm';
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -70,6 +72,15 @@ export const cogChannels = pgTable('cog_channels', {
   releaseReviewChannelId: varchar('release_review_channel_id', { length: 32 }),
   curseforgeSlug: text('curseforge_slug'),
   wagoSlug: text('wago_slug'),
+  // Roadmap broadcast (issue #10). `roadmap_pin_channel_id` is the rollout
+  // gate: NULL means this cog hasn't opted in and renders are skipped. The
+  // two message-id columns are bookkeeping for edit-in-place on the per-cog
+  // pin and on this cog's row in the suite-wide #roadmap channel.
+  roadmapPinChannelId: varchar('roadmap_pin_channel_id', { length: 32 }),
+  roadmapPinMessageId: varchar('roadmap_pin_message_id', { length: 32 }),
+  roadmapAggregatePinMessageId: varchar('roadmap_aggregate_pin_message_id', {
+    length: 32,
+  }),
   createdAt: timestamp('created_at', { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -80,6 +91,27 @@ export const cogChannels = pgTable('cog_channels', {
 
 export type CogChannel = typeof cogChannels.$inferSelect;
 export type NewCogChannel = typeof cogChannels.$inferInsert;
+
+// Suite-wide singleton settings. Currently just the aggregate `#roadmap`
+// channel id. The `id = 1` CHECK enforces a single row so callers never
+// have to guess which row to update — see drizzle/0009_*.sql. No row exists
+// until `/scribe-roadmap-aggregate-set` seeds it.
+export const appSettings = pgTable(
+  'app_settings',
+  {
+    id: integer('id').primaryKey(),
+    roadmapAggregateChannelId: varchar('roadmap_aggregate_channel_id', {
+      length: 32,
+    }),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [check('app_settings_single_row', sql`${t.id} = 1`)]
+);
+
+export type AppSettings = typeof appSettings.$inferSelect;
+export type NewAppSettings = typeof appSettings.$inferInsert;
 
 export const releaseAnnouncements = pgTable(
   'release_announcements',

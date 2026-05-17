@@ -1,0 +1,41 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`renderAggregateRow > matches the rendered snapshot 1`] = `
+{
+  "color": 5793266,
+  "description": "**v0.13.5** — in development · 7 of 12 done · [GitHub →](https://github.com/gezmodean-wow/tally/milestone/v0.13.5)
+  • Bag stuck after auction posted
+  • Net-worth panel flicker on rest tick
+  • Per-item research column wraps at narrow widths
+  _(+2 more)_
+
+**v0.14.0** — 5 issues · [GitHub →](https://github.com/gezmodean-wow/tally/milestone/v0.14.0)
+
+**Backlog** — 23 issues · [GitHub →](https://github.com/gezmodean-wow/tally/milestone/1)",
+  "footer": {
+    "icon_url": undefined,
+    "text": "last updated 2026-05-07 14:33 UTC",
+  },
+  "title": "📍 Tally",
+}
+`;
+
+exports[`renderCogPin > matches the rendered snapshot 1`] = `
+{
+  "color": 5793266,
+  "description": "**v0.14.0** — in development · 7 of 12 done · [GitHub →](https://github.com/gezmodean-wow/tally/milestone/v0.14.0)
+  • Bag stuck after auction posted
+  • Net-worth panel flicker on rest tick
+  • Per-item research column wraps at narrow widths
+  _(+2 more)_
+
+**Backlog** — 23 issues · [GitHub →](https://github.com/gezmodean-wow/tally/milestone/1)
+
+_Each report's status is also posted in its own thread when its milestone changes._",
+  "footer": {
+    "icon_url": undefined,
+    "text": "last updated 2026-05-07 14:33 UTC",
+  },
+  "title": "📍 Tally roadmap",
+}
+`;

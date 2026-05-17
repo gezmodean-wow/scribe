@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNotNull } from 'drizzle-orm';
 import type { Database } from '../../core/db/client.js';
 import { cogChannels, type CogChannel } from '../../core/db/schema.js';
 
@@ -194,6 +194,46 @@ export async function setReleaseConfig(
     .where(eq(cogChannels.discordChannelId, discordChannelId))
     .returning();
   return row;
+}
+
+// Roadmap broadcast config (issue #10). `roadmapPinChannelId` is the rollout
+// gate; the two message-id fields are edit-in-place bookkeeping. Mirrors the
+// partial-update shape of `setReleaseConfig` so callers set only what changed.
+export async function updateRoadmapFields(
+  db: Database,
+  discordChannelId: string,
+  fields: {
+    roadmapPinChannelId?: string | null;
+    roadmapPinMessageId?: string | null;
+    roadmapAggregatePinMessageId?: string | null;
+  }
+): Promise<CogChannel | undefined> {
+  const set: Record<string, unknown> = { updatedAt: new Date() };
+  if (fields.roadmapPinChannelId !== undefined) {
+    set.roadmapPinChannelId = fields.roadmapPinChannelId;
+  }
+  if (fields.roadmapPinMessageId !== undefined) {
+    set.roadmapPinMessageId = fields.roadmapPinMessageId;
+  }
+  if (fields.roadmapAggregatePinMessageId !== undefined) {
+    set.roadmapAggregatePinMessageId = fields.roadmapAggregatePinMessageId;
+  }
+  const [row] = await db
+    .update(cogChannels)
+    .set(set)
+    .where(eq(cogChannels.discordChannelId, discordChannelId))
+    .returning();
+  return row;
+}
+
+// Cogs that have opted into roadmap broadcast — the refresh timer and the
+// aggregate re-render iterate this set.
+export async function listRoadmapCogs(db: Database): Promise<CogChannel[]> {
+  return db
+    .select()
+    .from(cogChannels)
+    .where(isNotNull(cogChannels.roadmapPinChannelId))
+    .orderBy(asc(cogChannels.cogIdPrefix));
 }
 
 export async function findCogByRepo(
