@@ -4,6 +4,7 @@ import type { Database } from '../../core/db/client.js';
 import type { GithubClient } from '../../core/github.js';
 import type { HttpServer } from '../../core/http.js';
 import type { Logger } from '../../core/logger.js';
+import { startRoadmapRefreshTimer } from '../roadmap/index.js';
 import { registerGithubWebhooks } from './github-webhooks.js';
 import { registerTicketsInteractions } from './interactions.js';
 import { registerTranscriptModule } from './transcript.js';
@@ -21,5 +22,6 @@ export function registerTicketsModule(deps: TicketsModuleDeps) {
   registerGithubWebhooks(deps);
   registerTicketsInteractions(deps);
   registerTranscriptModule(deps);
+  startRoadmapRefreshTimer(deps);
   deps.log.info('Tickets module registered');
 }

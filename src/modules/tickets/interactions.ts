@@ -45,6 +45,12 @@ import {
   isTicketActionId,
 } from './ticket-actions.js';
 import { handleTranscriptCommand } from './transcript.js';
+import {
+  handleCogRoadmapSet,
+  handleCogRoadmapUnset,
+  handleScribeRoadmapAggregateClear,
+  handleScribeRoadmapAggregateSet,
+} from '../roadmap/index.js';
 import type { TicketsModuleDeps } from './index.js';
 
 type Handler = (
@@ -76,6 +82,10 @@ const HANDLERS: Record<string, Handler> = {
   'cog-release-clear': handleCogReleaseClear,
   'cog-release-show': handleCogReleaseShow,
   'release-redraft': handleReleaseRedraft,
+  'cog-roadmap-set': handleCogRoadmapSet,
+  'cog-roadmap-unset': handleCogRoadmapUnset,
+  'scribe-roadmap-aggregate-set': handleScribeRoadmapAggregateSet,
+  'scribe-roadmap-aggregate-clear': handleScribeRoadmapAggregateClear,
   transcript: handleTranscriptCommand,
 };
 

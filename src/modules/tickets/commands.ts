@@ -489,4 +489,60 @@ export const ticketsCommands: RESTPostAPIApplicationCommandsJSONBody[] = [
         .setRequired(false)
     )
     .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('cog-roadmap-set')
+    .setDescription(
+      'Opt a cog into roadmap broadcast and pin its roadmap message.'
+    )
+    .setDMPermission(false)
+    .addChannelOption((o) =>
+      o
+        .setName('channel')
+        .setDescription('Forum channel of the linked cog')
+        .addChannelTypes(ChannelType.GuildForum)
+        .setRequired(true)
+    )
+    .addChannelOption((o) =>
+      o
+        .setName('pin')
+        .setDescription('Channel to pin the roadmap message in')
+        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+        .setRequired(true)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('cog-roadmap-unset')
+    .setDescription('Disable roadmap broadcast for a cog and remove its pins.')
+    .setDMPermission(false)
+    .addChannelOption((o) =>
+      o
+        .setName('channel')
+        .setDescription('Forum channel of the linked cog')
+        .addChannelTypes(ChannelType.GuildForum)
+        .setRequired(true)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('scribe-roadmap-aggregate-set')
+    .setDescription(
+      'Set the suite-wide #roadmap channel for aggregate roadmap pins.'
+    )
+    .setDMPermission(false)
+    .addChannelOption((o) =>
+      o
+        .setName('channel')
+        .setDescription('Channel for the aggregate roadmap pins')
+        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+        .setRequired(true)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('scribe-roadmap-aggregate-clear')
+    .setDescription('Clear the suite-wide #roadmap aggregate channel.')
+    .setDMPermission(false)
+    .toJSON(),
 ];

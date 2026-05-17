@@ -15,6 +15,9 @@ Each session, check the top entry of each source against the codes below. If new
 | [doc conventions](https://github.com/gezmodean-wow/cogworks/blob/main/runbooks/doc-conventions.md) | 2026-05-05a |
 | [technical standards](https://github.com/gezmodean-wow/cogworks/blob/main/runbooks/technical-standards.md) | 2026-05-05a |
 | [standards-sync mechanism](https://github.com/gezmodean-wow/cogworks/blob/main/runbooks/standards-sync.md) | 2026-05-05a |
+| [roadmap & version broadcast](https://github.com/gezmodean-wow/chronoforge/blob/main/runbooks/roadmap-and-version-broadcast.md) — _draft_ | 2026-05-07a (draft) |
+
+The roadmap & version broadcast runbook is still a **draft in the private `gezmodean-wow/chronoforge` repo** — it has no public `cogworks/` URL yet, so the auto-check above can't reach it. On adoption it moves to `cogworks/runbooks/roadmap-and-version-broadcast.md`; swap the link to the public URL and drop the `(draft)` marker then. Scribe's roadmap module (`src/modules/roadmap/`) consumes its milestone-event semantics.
 
 Scribe does NOT subscribe to the `cogworks/shared/` file pool — that pool is WoW-cog-specific (PR/issue templates assume in-game `/cog debug` Copy diagnostics; pre-tag-check.sh assumes BigWigsMods packager). Scribe maintains its own PR/issue templates and release process appropriate to a Railway-deployed Node service.
 
