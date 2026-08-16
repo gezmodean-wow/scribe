@@ -40,6 +40,7 @@ import {
   handleImportSelect,
   isImportComponentId,
 } from './import.js';
+import { handleReleaseCheck } from './release-check.js';
 import {
   handleTicketActionButton,
   isTicketActionId,
@@ -82,6 +83,7 @@ const HANDLERS: Record<string, Handler> = {
   'cog-release-clear': handleCogReleaseClear,
   'cog-release-show': handleCogReleaseShow,
   'release-redraft': handleReleaseRedraft,
+  'release-check': handleReleaseCheck,
   'cog-roadmap-set': handleCogRoadmapSet,
   'cog-roadmap-unset': handleCogRoadmapUnset,
   'scribe-roadmap-aggregate-set': handleScribeRoadmapAggregateSet,

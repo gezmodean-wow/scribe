@@ -14,10 +14,25 @@ Each session, check the top entry of each source against the codes below. If new
 | [branch & release flow](https://github.com/gezmodean-wow/cogworks/blob/main/runbooks/branch-and-release-flow.md) | 2026-05-06a |
 | [doc conventions](https://github.com/gezmodean-wow/cogworks/blob/main/runbooks/doc-conventions.md) | 2026-05-05a |
 | [technical standards](https://github.com/gezmodean-wow/cogworks/blob/main/runbooks/technical-standards.md) | 2026-05-05a |
-| [standards-sync mechanism](https://github.com/gezmodean-wow/cogworks/blob/main/runbooks/standards-sync.md) | 2026-05-05a |
+| [standards-sync mechanism](https://github.com/gezmodean-wow/cogworks/blob/main/runbooks/standards-sync.md) | 2026-06-27a |
+| [cross-repo coordination](https://github.com/gezmodean-wow/cogworks/blob/main/runbooks/cross-repo-coordination.md) | 2026-05-07a |
 | [roadmap & version broadcast](https://github.com/gezmodean-wow/chronoforge/blob/main/runbooks/roadmap-and-version-broadcast.md) — _draft_ | 2026-05-07a (draft) |
 
 The roadmap & version broadcast runbook is still a **draft in the private `gezmodean-wow/chronoforge` repo** — it has no public `cogworks/` URL yet, so the auto-check above can't reach it. On adoption it moves to `cogworks/runbooks/roadmap-and-version-broadcast.md`; swap the link to the public URL and drop the `(draft)` marker then. Scribe's roadmap module (`src/modules/roadmap/`) consumes its milestone-event semantics.
+
+## Coordinator (chronoforge)
+
+Suite-wide coordination — runbook drafting, audits, multi-cog initiatives, cross-cog bug diagnosis — happens in `gezmodean-wow/chronoforge` (issue prefix `CF-N`). Cross-repo work routed *to* scribe from chronoforge or cogworks lands as a GitHub issue with the `cross-repo-inbound` label.
+
+**Session-start pre-flight:** after the standards-acknowledgments check, run:
+
+```bash
+gh issue list --label cross-repo-inbound --state open --repo gezmodean-wow/scribe
+```
+
+If non-empty, surface inbound tickets to the user before proceeding to their task. If empty, proceed silently. This is a pre-flight, not a gate — the user can ignore it and the inbound stays queued.
+
+Don't read or modify chronoforge from here — it's the coordinator's repo, not part of scribe's scope. The exception is reading a spec a chronoforge-filed ticket explicitly hands off (the ticket names the path). **Scribe does not bridge chronoforge issues to Discord** — CF-N work is engineering-internal and has no player-facing forum thread. Scribe is repo-scoped for outbound work too: cross-repo needs get filed to chronoforge, which has the reach to fan them out.
 
 Scribe does NOT subscribe to the `cogworks/shared/` file pool — that pool is WoW-cog-specific (PR/issue templates assume in-game `/cog debug` Copy diagnostics; pre-tag-check.sh assumes BigWigsMods packager). Scribe maintains its own PR/issue templates and release process appropriate to a Railway-deployed Node service.
 
@@ -64,4 +79,8 @@ When tagging:
 
 ## Modeling the release process with ticket status
 
-This is in-flight work — see open issue(s) tagged `release-state-modeling`. The chronoforge release model (alpha = exposure not WIP; promotion by re-tagging same commit; beta optional release candidate) requires scribe to track per-issue release-channel state and distinguish "newly fixed" from "promoted to stable" in announcements. Until that work lands, scribe's release-announcement behavior treats every tag's closed-issue rollup as "newly fixed."
+Tracked as **scribe#3**; the channel-state model shipped there. The chronoforge release model (alpha = exposure not WIP; promotion by re-tagging the same commit; beta optional release candidate) means a stable tag is not automatically "new fixes" — it may be "the fixes players already had are now the default install."
+
+Scribe models this per issue: `thread_issue_map.first_released_{tag,channel,at}` records where a fix first appeared, `promoted_to_stable_{tag,at}` records the promotion. `src/modules/tickets/promotion.ts` resolves prior prerelease tags to commit SHAs to decide whether a stable tag is a promotion or new code, and both the `#releases` draft and the per-thread followup pick their framing from that. `/release-check <cog> [tag]` is the pre-tag readiness report.
+
+Full walkthrough in `docs/RELEASE_PROCESS.md`. Two things to know before changing this area: the `first_released_*` and `promoted_to_stable_*` writes are **write-once** (a later release must not rewrite where a fix first appeared), and there is **no backfill** — rows predating the feature stay NULL and render as "newly fixed", forward-only by design.

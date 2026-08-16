@@ -11,7 +11,8 @@ The Chronoforge's ledger-clerk. SCRIBE listens to the forum halls, catches every
 - On acknowledgement, files the thread as a GitHub Issue in the matching cog repo (FlipQueue, Tempo, Maxcraft, Cogworks, and friends).
 - Mirrors comments both ways: thread ↔ issue.
 - Recognizes Claude Code status comments (e.g. `@needs-info:`) and routes them to the thread; ferries player replies back to the issue.
-- On release, drafts a human-facing changelog from closed issues per cog and posts to `#releases`.
+- On release, drafts a human-facing changelog from closed issues per cog and posts to `#releases` — channel-aware (alpha / beta / release) and promotion-aware, so re-tagging an alpha as stable announces as "promoted to stable" rather than re-announcing the same fixes as new. See [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md).
+- `/release-check <cog>` reports pre-tag readiness: pending issues, missing `## Player summary` sections, RELEASES.md section status, and whether the tag would be a promotion.
 - Notifies subscribed players when issues they care about change state.
 
 ## What SCRIBE is not

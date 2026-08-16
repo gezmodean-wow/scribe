@@ -1372,7 +1372,11 @@ function buildIssueBody(
     '',
     '---',
     `Filed from Discord thread: ${threadUrl}`,
-    `Opened by: ${author}`,
+    // Thread owner, NOT necessarily the reporter — on imported or backfilled
+    // threads this is whoever created the thread (often the maintainer). The
+    // reporter's id rides along on each promoted comment as a
+    // `<!-- discord-author: ID -->` marker; use that to @-mention a player.
+    `Thread opened by: ${author}`,
   ].join('\n');
 }
 

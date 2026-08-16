@@ -491,6 +491,27 @@ export const ticketsCommands: RESTPostAPIApplicationCommandsJSONBody[] = [
     .toJSON(),
 
   new SlashCommandBuilder()
+    .setName('release-check')
+    .setDescription(
+      'Pre-tag readiness report for a cog: pending issues, player summaries, RELEASES.md, promotion.'
+    )
+    .setDMPermission(false)
+    .addChannelOption((o) =>
+      o
+        .setName('channel')
+        .setDescription('Forum channel of the linked cog')
+        .addChannelTypes(ChannelType.GuildForum)
+        .setRequired(true)
+    )
+    .addStringOption((o) =>
+      o
+        .setName('tag')
+        .setDescription('Tag you plan to cut (e.g. v0.14.0) — enables section + promotion checks')
+        .setRequired(false)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
     .setName('cog-roadmap-set')
     .setDescription(
       'Opt a cog into roadmap broadcast and pin its roadmap message.'

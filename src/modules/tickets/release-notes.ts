@@ -86,6 +86,24 @@ export function extractReleasesSection(
   return matchUnreleasedSection(body);
 }
 
+// Which of `extractReleasesSection`'s three match tiers a tag would hit, for
+// the pre-tag readiness report. Same order and same matchers as the extractor
+// — reporting a different answer than the drafter would actually use is worse
+// than not reporting at all, so both go through the same helpers.
+export type ReleasesSectionMatch = 'exact' | 'base' | 'unreleased' | 'none';
+
+export function classifyReleasesSectionMatch(
+  body: string | null | undefined,
+  tag: string
+): ReleasesSectionMatch {
+  if (!body) return 'none';
+  if (matchVersionSection(body, tag)) return 'exact';
+  const base = tag.replace(/-(?:alpha|beta|rc)\w*$/i, '');
+  if (base !== tag && matchVersionSection(body, base)) return 'base';
+  if (matchUnreleasedSection(body)) return 'unreleased';
+  return 'none';
+}
+
 function matchVersionSection(body: string, version: string): string | null {
   const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // Match `## <version>` either alone on the line or followed by a non-version

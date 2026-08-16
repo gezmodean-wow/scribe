@@ -19,6 +19,7 @@ import {
   releaseAnnouncements,
   threadIssueMap,
   type ReleaseAnnouncement,
+  type ThreadIssueMap,
 } from '../../core/db/schema.js';
 import { findCogByRepo, type CogChannel } from './channels.js';
 import type { TicketsModuleDeps } from './index.js';
@@ -31,6 +32,12 @@ import {
   parseReleaseTag,
   sameMajorMinor,
 } from './release-notes.js';
+import {
+  detectPromotion,
+  isPromotion,
+  isSameVersionLine,
+  loadPromotedIssueNumbers,
+} from './promotion.js';
 import { applyStatusTag } from './status.js';
 
 export type ReleaseChannel = 'alpha' | 'beta' | 'release';
@@ -161,27 +168,49 @@ export async function handleReleaseEvent(
   await draftAndPost(payload, cog, deps);
 }
 
-export async function draftAndPost(
-  payload: ReleasePayload,
-  cog: CogChannel,
-  deps: TicketsModuleDeps
-): Promise<ReleaseAnnouncement | null> {
-  const channelKind = classifyReleaseChannel(
-    payload.release.tag_name,
-    payload.release.prerelease
-  );
+// Everything the draft renderer needs, resolved from GitHub + the channel
+// state we've recorded. Shared by the webhook path (`draftAndPost`) and the
+// manual path (`redraftRelease`) so a redraft can never disagree with the
+// original about whether a tag is a promotion.
+type DraftInputs = {
+  channelKind: ReleaseChannel;
+  draftBody: string;
+  promotedFromTags: string[];
+};
 
-  const owner = payload.repository.owner.login;
-  const repo = payload.repository.name;
-  const thisTag = payload.release.tag_name;
+type ReleaseLike = {
+  tag_name: string;
+  name?: string | null;
+  html_url: string;
+  prerelease: boolean;
+  published_at: string | null;
+  created_at: string;
+};
+
+export async function buildDraftInputs(
+  cog: CogChannel,
+  release: ReleaseLike,
+  deps: TicketsModuleDeps
+): Promise<DraftInputs> {
+  const owner = cog.githubOwner;
+  const repo = cog.githubRepo;
+  const thisTag = release.tag_name;
+  const channelKind = classifyReleaseChannel(thisTag, release.prerelease);
 
   const priorReleases = await listPriorReleases(
     owner,
     repo,
-    payload.release.published_at ?? payload.release.created_at,
+    release.published_at ?? release.created_at,
     deps
   );
   const renderModeDecision = decideRenderMode(thisTag, priorReleases);
+
+  // Only a stable tag can promote. Skipping the lookup for alpha/beta keeps
+  // the common case (the rapid alpha cadence) at zero extra GitHub calls.
+  const promotion =
+    channelKind === 'release'
+      ? await detectPromotion(owner, repo, thisTag, deps)
+      : null;
 
   const [issues, releasesSection] = await Promise.all([
     collectShippedIssuesForRelease(
@@ -195,18 +224,66 @@ export async function draftAndPost(
     fetchReleasesSection(owner, repo, thisTag, deps),
   ]);
 
-  const draft = composeDraft({
-    repoName: payload.repository.name,
+  let promotionRender: PromotionRender | null = null;
+  let newlyFixed = issues;
+  if (isPromotion(promotion)) {
+    const cohortNumbers = await loadPromotedIssueNumbers(
+      owner,
+      repo,
+      promotion!.priorPrereleaseTags,
+      deps
+    );
+    const cohort = new Set(cohortNumbers);
+    // A clean promotion has an empty commit diff (same SHA as the prerelease
+    // it re-tags), so the cohort has to come from recorded per-issue state
+    // rather than from the commit log. Anything the diff *did* turn up that
+    // isn't in the cohort is genuinely new since the prerelease.
+    const alreadyHydrated = issues.filter((i) => cohort.has(i.number));
+    const toFetch = cohortNumbers.filter(
+      (n) => !alreadyHydrated.some((i) => i.number === n)
+    );
+    const fetched = await fetchShippedIssueDetails(owner, repo, toFetch, deps);
+    promotionRender = {
+      fromTags: promotion!.sameCommitTags,
+      cohortTags: promotion!.priorPrereleaseTags,
+      promotedIssues: [...alreadyHydrated, ...fetched].sort(
+        (a, b) => a.number - b.number
+      ),
+    };
+    newlyFixed = issues.filter((i) => !cohort.has(i.number));
+  }
+
+  const draftBody = composeDraft({
+    repoName: repo,
     tag: thisTag,
-    title: payload.release.name ?? thisTag,
-    releaseUrl: payload.release.html_url,
+    title: release.name ?? thisTag,
+    releaseUrl: release.html_url,
     downloadLinks: buildDownloadLinks(cog, channelKind),
     channelKind,
-    issues,
+    issues: newlyFixed,
     releasesSection,
     renderMode: renderModeDecision.mode,
     priorTag: renderModeDecision.priorTag,
+    promotion: promotionRender,
   });
+
+  return {
+    channelKind,
+    draftBody,
+    promotedFromTags: promotion?.sameCommitTags ?? [],
+  };
+}
+
+export async function draftAndPost(
+  payload: ReleasePayload,
+  cog: CogChannel,
+  deps: TicketsModuleDeps
+): Promise<ReleaseAnnouncement | null> {
+  const { channelKind, draftBody, promotedFromTags } = await buildDraftInputs(
+    cog,
+    payload.release,
+    deps
+  );
 
   const reviewChannelId = cog.releaseReviewChannelId!;
   const reviewChannel = await fetchTextChannel(
@@ -231,10 +308,11 @@ export async function draftAndPost(
       releaseUrl: payload.release.html_url,
       channel: channelKind,
       prerelease: payload.release.prerelease,
+      promotedFromTags,
       status: 'pending',
       reviewChannelId,
       announceChannelId: cog.releaseAnnounceChannelId ?? null,
-      draftBody: draft,
+      draftBody,
     })
     .onConflictDoNothing({
       target: [
@@ -277,7 +355,7 @@ export async function draftAndPost(
       channel: channelKind,
       reviewMessageId: chain.anchorId,
       continuationCount: chain.continuationIds.length,
-      issueCount: issues.length,
+      promotedFromTags,
     },
     'release draft posted for review'
   );
@@ -285,10 +363,11 @@ export async function draftAndPost(
   return updated ?? row;
 }
 
-type ClosedIssue = {
+export type ShippedIssue = {
   number: number;
   title: string;
   htmlUrl: string;
+  state: string;
   summary: string | null;
   // Only meaningful when summary is null — flips the warning-bucket bullet
   // from "no player-facing copy at all" to "had Player updates but didn't
@@ -299,22 +378,10 @@ type ClosedIssue = {
 // Issue references in commit messages — what actually shipped between two
 // release tags. Cog convention is `fix(FQ-N): subject` (and similar for other
 // cogs); GitHub also auto-links `Closes #N` / `Fixes #N` / `Resolves #N`.
-async function collectShippedIssuesForRelease(
-  owner: string,
-  repo: string,
-  thisTag: string,
-  cogIdPrefix: string,
-  priorReleases: PriorRelease[],
-  deps: TicketsModuleDeps
-): Promise<ClosedIssue[]> {
-  const commits = await collectCommitsSincePriorRelease(
-    owner,
-    repo,
-    thisTag,
-    priorReleases,
-    deps
-  );
-
+export function collectIssueNumbersFromCommits(
+  commits: CommitInfo[],
+  cogIdPrefix: string
+): number[] {
   const escapedPrefix = cogIdPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const idRe = new RegExp(`\\b${escapedPrefix}-(\\d+)\\b`, 'gi');
   const closeRe = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
@@ -332,8 +399,19 @@ async function collectShippedIssuesForRelease(
       if (!Number.isNaN(n)) numbers.add(n);
     }
   }
+  return [...numbers].sort((a, b) => a - b);
+}
 
-  const collected: ClosedIssue[] = [];
+// Hydrates issue numbers into the shape the draft renderer wants. Pull
+// requests are dropped (a `Fixes #N` in a merge commit can reference either).
+// Numbers that 404 are skipped quietly — cross-repo references land here.
+export async function fetchShippedIssueDetails(
+  owner: string,
+  repo: string,
+  numbers: number[],
+  deps: TicketsModuleDeps
+): Promise<ShippedIssue[]> {
+  const collected: ShippedIssue[] = [];
   for (const n of numbers) {
     try {
       const { data: issue } = await deps.github.rest.issues.get({
@@ -367,6 +445,7 @@ async function collectShippedIssuesForRelease(
         number: issue.number,
         title: issue.title,
         htmlUrl: issue.html_url,
+        state: issue.state,
         summary,
         hadPlayerUpdate,
       });
@@ -384,7 +463,26 @@ async function collectShippedIssuesForRelease(
   return collected;
 }
 
-type CommitInfo = { commit: { message: string } };
+async function collectShippedIssuesForRelease(
+  owner: string,
+  repo: string,
+  thisTag: string,
+  cogIdPrefix: string,
+  priorReleases: PriorRelease[],
+  deps: TicketsModuleDeps
+): Promise<ShippedIssue[]> {
+  const commits = await collectCommitsSincePriorRelease(
+    owner,
+    repo,
+    thisTag,
+    priorReleases,
+    deps
+  );
+  const numbers = collectIssueNumbersFromCommits(commits, cogIdPrefix);
+  return fetchShippedIssueDetails(owner, repo, numbers, deps);
+}
+
+export type CommitInfo = { commit: { message: string } };
 
 // Trimmed shape of a release row from listReleases — just what the diff and
 // chain-detection paths need. Pulled into a type alias so call sites can
@@ -542,6 +640,15 @@ export async function fetchReleasesSection(
   return section;
 }
 
+// What the promotion sections need. `fromTags` are the prerelease tags that
+// sit on this exact commit (what makes it a promotion); `cohortTags` is the
+// wider set of prereleases on this version whose issues are being promoted.
+export type PromotionRender = {
+  fromTags: string[];
+  cohortTags: string[];
+  promotedIssues: ShippedIssue[];
+};
+
 export function composeDraft(input: {
   repoName: string;
   tag: string;
@@ -549,10 +656,11 @@ export function composeDraft(input: {
   releaseUrl: string;
   downloadLinks: string[];
   channelKind: ReleaseChannel;
-  issues: ClosedIssue[];
+  issues: ShippedIssue[];
   releasesSection: string | null;
   renderMode: RenderMode;
   priorTag: string | null;
+  promotion?: PromotionRender | null;
 }): string {
   const {
     repoName,
@@ -564,8 +672,9 @@ export function composeDraft(input: {
     releasesSection,
     renderMode,
     priorTag,
+    promotion,
   } = input;
-  const badge = CHANNEL_BADGE[channelKind];
+  const badge = promotion ? 'Promoted to stable' : CHANNEL_BADGE[channelKind];
   const lines: string[] = [];
   lines.push(`**${repoName} ${tag}** · ${badge}`);
   const linksLine = [...downloadLinks, `[GitHub release](${releaseUrl})`].join(
@@ -573,6 +682,14 @@ export function composeDraft(input: {
   );
   lines.push(linksLine);
   lines.push('');
+
+  // Promotion render — this stable tag re-tags a commit that already shipped
+  // under an alpha/beta. Nothing new was built, so the notes lead with what
+  // actually changed (the default install) instead of re-announcing the work
+  // as if it were fresh.
+  if (promotion) {
+    return renderPromotionDraft(lines, tag, issues, promotion).join('\n');
+  }
 
   // Delta render — used for patches and subsequent prereleases on the same
   // major.minor line. Skip the long RELEASES.md prose (the player saw it on
@@ -645,9 +762,78 @@ export function composeDraft(input: {
   return lines.join('\n');
 }
 
+function renderPromotionDraft(
+  lines: string[],
+  tag: string,
+  newlyFixed: ShippedIssue[],
+  promotion: PromotionRender
+): string[] {
+  lines.push(`## Promoting ${tag} to stable`);
+  lines.push('');
+  lines.push(
+    `_Same build as ${promotion.fromTags.map((t) => `\`${t}\``).join(', ')} — players already on the alpha/beta channel are running this code. This makes it the default install._`
+  );
+
+  if (promotion.promotedIssues.length > 0) {
+    lines.push('');
+    lines.push(
+      `**Promoted from alpha/beta** (${countLabel(promotion.promotedIssues.length)})`
+    );
+    for (const issue of promotion.promotedIssues) {
+      lines.push(issueBullet(issue));
+    }
+  }
+
+  if (newlyFixed.length > 0) {
+    lines.push('');
+    lines.push(
+      `**Newly fixed in this release** (${countLabel(newlyFixed.length)})`
+    );
+    for (const issue of newlyFixed) {
+      lines.push(issueBullet(issue));
+    }
+  }
+
+  // Same warning bucket the full render uses — a promotion is the last chance
+  // to notice an issue shipped without player-facing copy, since this is the
+  // announcement that reaches the default channel.
+  const missing = [...promotion.promotedIssues, ...newlyFixed].filter(
+    (i) => !i.summary
+  );
+  if (missing.length > 0) {
+    lines.push('');
+    lines.push('## ⚠️ No player summary written');
+    lines.push(
+      '_Add a `## Player summary` section to the issue body, then run `/release-redraft`._'
+    );
+    for (const issue of missing) {
+      lines.push(
+        `- ${issue.title} · [#${issue.number}](${issue.htmlUrl})` +
+          (issue.hadPlayerUpdate
+            ? ' — had Player updates but no Player summary in body'
+            : '')
+      );
+    }
+  }
+
+  return lines;
+}
+
+function countLabel(n: number): string {
+  return `${n} issue${n === 1 ? '' : 's'}`;
+}
+
+// Summary when the issue has one, title otherwise — the missing-summary case
+// still gets a bullet so the player sees the change, with the dev-facing
+// nudge collected separately in the warning bucket.
+function issueBullet(issue: ShippedIssue): string {
+  const text = issue.summary ?? issue.title;
+  return `- ${text} · [#${issue.number}](${issue.htmlUrl})`;
+}
+
 function renderDeltaDraft(
   lines: string[],
-  issues: ClosedIssue[],
+  issues: ShippedIssue[],
   priorTag: string | null
 ): string[] {
   lines.push(priorTag ? `## Changes since ${priorTag}` : '## Changes');
@@ -1199,7 +1385,8 @@ async function fanOutThreadFollowups(
       continue;
     }
     const thread = channel as ThreadChannel;
-    const msg = buildThreadFollowup(row, cog);
+    const framing = classifyIssueFraming(row, link);
+    const msg = buildThreadFollowup(row, cog, framing);
     await thread.send(msg).then(
       () => posted++,
       (err) => {
@@ -1235,20 +1422,107 @@ async function fanOutThreadFollowups(
         );
       });
     }
+
+    await recordChannelState(row, link, framing, deps);
   }
   return { posted, skipped };
 }
 
+// Which of the three release framings applies to this issue on this release.
+//
+//   newly-fixed  — first time this issue has shipped anywhere
+//   promoted     — it already shipped under an alpha/beta of this same
+//                  version, and this stable tag re-tags that commit
+//   re-announced — it already shipped and this is neither of the above
+//                  (a redraft repost, or the issue riding along in a later
+//                  release's commit window). Keeps the same wording as
+//                  newly-fixed; broken out so the DB write can tell them
+//                  apart and never overwrite `first_released_*`.
+export type IssueFraming = 'newly-fixed' | 'promoted' | 're-announced';
+
+export function classifyIssueFraming(
+  row: Pick<ReleaseAnnouncement, 'tag' | 'channel' | 'promotedFromTags'>,
+  link: Pick<
+    ThreadIssueMap,
+    'firstReleasedTag' | 'firstReleasedChannel' | 'promotedToStableTag'
+  >
+): IssueFraming {
+  if (!link.firstReleasedTag) return 'newly-fixed';
+
+  const isStable = (row.channel as ReleaseChannel) === 'release';
+  const cameFromPrerelease =
+    link.firstReleasedChannel === 'alpha' || link.firstReleasedChannel === 'beta';
+  const thisIsPromotion = row.promotedFromTags.length > 0;
+  // A promotion only promotes its own version. An issue that first shipped in
+  // an earlier line's alpha and happens to be referenced here (a hand-edited
+  // draft body, say) is being re-announced, not promoted — saying "players on
+  // alpha already have this" about a different version would be wrong.
+  const ownVersion = isSameVersionLine(row.tag, link.firstReleasedTag);
+
+  if (isStable && cameFromPrerelease && thisIsPromotion && ownVersion) {
+    return 'promoted';
+  }
+  return 're-announced';
+}
+
+// Writes the per-issue channel state behind the framing. `first_released_*` is
+// write-once (a later release must not rewrite the history of where a fix
+// first appeared); `promoted_to_stable_*` is write-once for the same reason.
+async function recordChannelState(
+  row: ReleaseAnnouncement,
+  link: ThreadIssueMap,
+  framing: IssueFraming,
+  deps: TicketsModuleDeps
+): Promise<void> {
+  const patch: Partial<ThreadIssueMap> = {};
+  const at = row.publishedAt ?? new Date();
+
+  if (framing === 'newly-fixed') {
+    patch.firstReleasedTag = row.tag;
+    patch.firstReleasedChannel = row.channel;
+    patch.firstReleasedAt = at;
+  }
+  if (framing === 'promoted' && !link.promotedToStableTag) {
+    patch.promotedToStableTag = row.tag;
+    patch.promotedToStableAt = at;
+  }
+  if (Object.keys(patch).length === 0) return;
+
+  await deps.db
+    .update(threadIssueMap)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(eq(threadIssueMap.id, link.id))
+    .catch((err: unknown) => {
+      deps.log.warn(
+        { err, issue: link.githubIssueNumber, tag: row.tag },
+        'release: could not record per-issue channel state'
+      );
+    });
+}
+
 function buildThreadFollowup(
   row: ReleaseAnnouncement,
-  cog: CogChannel
+  cog: CogChannel,
+  framing: IssueFraming
 ): string {
   const channelKind = row.channel as ReleaseChannel;
-  const parts = [`📦 Fixed in [${row.tag}](${row.releaseUrl})`];
-  for (const link of buildDownloadLinks(cog, channelKind)) {
-    parts.push(`· ${link}`);
+  const links = buildDownloadLinks(cog, channelKind);
+  const linkSuffix = links.length > 0 ? ` · ${links.join(' · ')}` : '';
+  const tagLink = `[${row.tag}](${row.releaseUrl})`;
+
+  if (framing === 'promoted') {
+    return (
+      `✅ Promoted to stable in ${tagLink} — now the default install. ` +
+      `Players on the alpha/beta channel are already running this code.${linkSuffix}`
+    );
   }
-  return parts.join(' ');
+  if (channelKind === 'release') {
+    return `📦 Fixed in ${tagLink} — default channel.${linkSuffix}`;
+  }
+  return (
+    `📦 Fixed in ${tagLink} — opt-in via the ${channelKind} channel. ` +
+    `Stable promotion to follow.${linkSuffix}`
+  );
 }
 
 // Pulls every #N reference out of the draft markdown. Used at fan-out time so
@@ -1298,37 +1572,11 @@ export async function redraftRelease(
     throw err;
   }
 
-  const channelKind = classifyReleaseChannel(release.tag_name, release.prerelease);
-  const priorReleases = await listPriorReleases(
-    owner,
-    repo,
-    release.published_at ?? release.created_at,
+  const { channelKind, draftBody, promotedFromTags } = await buildDraftInputs(
+    cog,
+    release,
     deps
   );
-  const renderModeDecision = decideRenderMode(release.tag_name, priorReleases);
-  const [issues, releasesSection] = await Promise.all([
-    collectShippedIssuesForRelease(
-      owner,
-      repo,
-      release.tag_name,
-      cog.cogIdPrefix,
-      priorReleases,
-      deps
-    ),
-    fetchReleasesSection(owner, repo, release.tag_name, deps),
-  ]);
-  const draftBody = composeDraft({
-    repoName: repo,
-    tag: release.tag_name,
-    title: release.name ?? release.tag_name,
-    releaseUrl: release.html_url,
-    downloadLinks: buildDownloadLinks(cog, channelKind),
-    channelKind,
-    issues,
-    releasesSection,
-    renderMode: renderModeDecision.mode,
-    priorTag: renderModeDecision.priorTag,
-  });
 
   const existing = await findReleaseAnnouncement(deps, owner, repo, tag);
 
@@ -1357,6 +1605,7 @@ export async function redraftRelease(
           status: 'pending',
           channel: channelKind,
           prerelease: release.prerelease,
+          promotedFromTags,
           githubReleaseId: String(release.id),
           releaseUrl: release.html_url,
           draftBody,
@@ -1381,6 +1630,7 @@ export async function redraftRelease(
           releaseUrl: release.html_url,
           channel: channelKind,
           prerelease: release.prerelease,
+          promotedFromTags,
           status: 'pending',
           reviewChannelId: cog.releaseReviewChannelId,
           announceChannelId: cog.releaseAnnounceChannelId ?? null,
@@ -1417,6 +1667,7 @@ export async function redraftRelease(
       draftBody,
       channel: channelKind,
       prerelease: release.prerelease,
+      promotedFromTags,
       releaseUrl: release.html_url,
       githubReleaseId: String(release.id),
       updatedAt: new Date(),

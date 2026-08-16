@@ -29,6 +29,24 @@ export const threadIssueMap = pgTable(
       length: 64,
     }).notNull(),
     status: varchar('status', { length: 16 }).notNull().default('open'),
+    // Release-channel state per issue (issue #3). `status` only says the issue
+    // reached `released`; these say *which channel* released it, which is what
+    // separates "newly fixed" from "promoted to stable" in announcements and
+    // thread followups.
+    //
+    // `first_released_*` is written once — the first release event that
+    // announces this issue — and never overwritten. `promoted_to_stable_*`
+    // fills in later, when a stable re-tag of the same commit promotes the
+    // issue's cohort. Rows predating this feature stay NULL and are treated as
+    // "newly fixed"; behavior applies forward only, per the issue's backfill
+    // decision.
+    firstReleasedTag: varchar('first_released_tag', { length: 100 }),
+    firstReleasedChannel: varchar('first_released_channel', { length: 16 }),
+    firstReleasedAt: timestamp('first_released_at', { withTimezone: true }),
+    promotedToStableTag: varchar('promoted_to_stable_tag', { length: 100 }),
+    promotedToStableAt: timestamp('promoted_to_stable_at', {
+      withTimezone: true,
+    }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -41,6 +59,13 @@ export const threadIssueMap = pgTable(
       t.githubOwner,
       t.githubRepo,
       t.githubIssueNumber
+    ),
+    // Promotion lookup: "which issues did tag X first release?" runs once per
+    // stable tag that turns out to be a re-tag of an alpha/beta.
+    index('thread_issue_map_first_released_idx').on(
+      t.githubOwner,
+      t.githubRepo,
+      t.firstReleasedTag
     ),
   ]
 );
@@ -124,6 +149,15 @@ export const releaseAnnouncements = pgTable(
     releaseUrl: text('release_url').notNull(),
     channel: varchar('channel', { length: 16 }).notNull(),
     prerelease: boolean('prerelease').notNull().default(false),
+    // Prior alpha/beta tags of this same version that sit on the exact commit
+    // this tag points at (issue #3). Non-empty ⇒ this release is a promotion,
+    // not new code, and both the announcement and the per-thread followups say
+    // so. Computed at draft time so publish and redraft agree without
+    // re-querying the GitHub tag list.
+    promotedFromTags: jsonb('promoted_from_tags')
+      .$type<string[]>()
+      .notNull()
+      .default([]),
     status: varchar('status', { length: 16 }).notNull().default('pending'),
     reviewChannelId: varchar('review_channel_id', { length: 32 }),
     reviewMessageId: varchar('review_message_id', { length: 32 }),

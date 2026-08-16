@@ -79,6 +79,24 @@ async function fetchTextAttachment(att: Attachment): Promise<FetchedText> {
   };
 }
 
+// The Discord author id, carried onto the mirrored comment as an HTML comment.
+// Invisible on GitHub, greppable, and — crucially — the only way an engineer
+// writing a `## Player update` reply on the issue can @-mention the player who
+// reported it. `thread_transcripts.discord_author_id` stores the same value,
+// but the reply gets written on the issue, so the id has to be reachable from
+// there. Do NOT confuse this with the `Thread opened by:` line in the issue
+// body — that is the thread's owner, which on imported/backfilled threads is
+// often the maintainer rather than the reporter.
+const DISCORD_AUTHOR_MARKER_RE = /<!--\s*discord-author:\s*(\d+)\s*-->/;
+
+export function buildDiscordAuthorMarker(authorId: string): string {
+  return `<!-- discord-author: ${authorId} -->`;
+}
+
+export function extractDiscordAuthorId(body: string): string | null {
+  return DISCORD_AUTHOR_MARKER_RE.exec(body)?.[1] ?? null;
+}
+
 export async function formatDiscordForGithub(
   message: Message,
   log: TicketsModuleDeps['log']
@@ -121,6 +139,9 @@ export async function formatDiscordForGithub(
     lines.push(result.body);
     lines.push('~~~');
   }
+
+  lines.push('');
+  lines.push(buildDiscordAuthorMarker(message.author.id));
 
   return lines.join('\n');
 }
