@@ -37,7 +37,15 @@ cp .env.example .env
 npm run dev
 ```
 
-Deployed on Railway. One service, one Postgres, one Discord identity.
+## Deployment
+
+Deployed on Railway. One service, one Postgres, one Discord identity. Push to `main` deploys; there is no tag-triggered upload like the WoW cogs have.
+
+**Migrations apply automatically.** The Railway deploy runs `npm run db:migrate` (drizzle-kit) before `npm start`, so a PR that adds a file under `drizzle/` needs no manual step — a successful deploy log ends with `migrations applied successfully!` before `SCRIBE starting`. That command lives in Railway's service config rather than in this repo, which is easy to miss when you're looking for it here.
+
+Slash commands are bulk-registered against the guild on every boot, so adding or changing one in `src/modules/tickets/commands.ts` takes effect on deploy with no separate registration step.
+
+To run a migration by hand (recovering from a failed deploy, say), point `DATABASE_URL` at the Railway Postgres and run `npm run db:migrate`. drizzle tracks what it has applied in a `__drizzle_migrations` table, so re-running is safe.
 
 ## Repo layout
 
